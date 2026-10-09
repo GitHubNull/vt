@@ -47,6 +47,9 @@ VibeType（中文名：码语，项目代号 VT）是一款专为程序员设计
 | 文档 | 说明 |
 | --- | --- |
 | [产品需求文档（PRD）](./doc/prd/README.md) | 完整的产品设计文档：背景、用户、功能需求、交互与视觉、非功能需求、版本规划 |
+| [技术文档](./doc/tech/README.md) | 技术方案：Tauri 2 + Rust + Vue 3 架构、依赖清单、核心链路、数据安全、跨平台设计 |
+| [任务路线图](./doc/roadmap/README.md) | 实现路线图：阶段划分、任务清单与依赖、执行规则 |
+| [任务 SPEC](./doc/specs/README.md) | 面向 AI 编程代理的任务规格说明（含验收标准），v0.1 已全量编写 |
 | [AGENTS.md](./AGENTS.md) | 面向 AI 编程助手与贡献者的协作指南 |
 | [DISCLAIMER.md](./DISCLAIMER.md) | 法律免责声明 |
 | [LICENSE](./LICENSE) | 开源许可证（MIT） |
@@ -55,7 +58,7 @@ VibeType（中文名：码语，项目代号 VT）是一款专为程序员设计
 
 ## 项目状态
 
-当前处于**产品设计阶段**：PRD 评审稿已完成，技术选型与实现尚未开始。欢迎围绕产品需求提出 Issue 讨论。
+当前处于**实现准备阶段**：PRD（v1.3）与技术方案（[doc/tech/](./doc/tech/README.md)）已完成，实现任务按 [任务路线图](./doc/roadmap/README.md) 与 [任务 SPEC](./doc/specs/README.md) 执行，v0.1 MVP 任务 SPEC 已就绪。欢迎围绕产品需求提出 Issue 讨论。
 
 ## 参与贡献
 
