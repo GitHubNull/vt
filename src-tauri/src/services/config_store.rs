@@ -92,12 +92,19 @@ pub enum FloatBallPosition {
     Fixed,
 }
 
-/// 界面设置（F-SET-01）。
+/// 界面设置（F-SET-01、F-SET-05）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GeneralConfig {
     pub language: Language,
     pub theme: Theme,
+    /// 开机自启动（PRD 3.8.6，F-SET-05；默认关。平台自启注册随实现任务接入，
+    /// 当前仅持久化开关）。
+    pub launch_at_login: bool,
+    /// 保存语音数据集（PRD 3.8.6，默认关，隐私优先：开启才可能留存音频样本）。
+    pub save_voice_dataset: bool,
+    /// 诊断模式（debug 日志级别，T-013 设置页开关）。
+    pub diagnostic_mode: bool,
 }
 
 /// 输入与录音设置（F-INPUT-01/02、PRD 3.8.2）。
@@ -215,12 +222,20 @@ impl Default for DictConfig {
 pub struct AboutConfig {
     /// 自动检查更新（默认开，每天最多一次，只发送版本号 / OS / 架构，NFR-PR-06）。
     pub auto_check_update: bool,
+    /// 更新源地址（v0.1 更新服务器未就绪，默认占位地址；tech/08 8.8）。
+    #[serde(default = "default_update_feed_url")]
+    pub update_feed_url: String,
+}
+
+fn default_update_feed_url() -> String {
+    "https://example.com/vibetype/releases.json".to_string()
 }
 
 impl Default for AboutConfig {
     fn default() -> Self {
         Self {
             auto_check_update: true,
+            update_feed_url: default_update_feed_url(),
         }
     }
 }

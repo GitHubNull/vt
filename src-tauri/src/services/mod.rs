@@ -9,3 +9,4 @@ pub mod config_store;
 pub mod hotkey;
 pub mod inject;
 pub mod log;
+pub mod update;

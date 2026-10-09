@@ -11,9 +11,10 @@
 //! 最小权限说明（AGENTS.md 3.5）：本能力仅注册用户配置的全局快捷键并接收其
 //! 按下 / 松开事件，不拦截、不记录其他按键。
 
+use std::str::FromStr;
 use std::sync::Arc;
 
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 use tokio::sync::mpsc;
 
 /// 后端上报的原始按键事件（Pressed / Released）。
@@ -29,12 +30,58 @@ pub enum HotkeyError {
     /// 快捷键串非法（如未知键名）。
     #[error("快捷键格式非法: {0}")]
     InvalidAccelerator(String),
+    /// 鼠标侧键（MouseBack / MouseForward）：v0.1 全局快捷键后端仅覆盖键盘，
+    /// 鼠标侧键需平台级钩子（Windows WH_MOUSE_LL / X11 XRecord / macOS CGEventTap），
+    /// 显式报错而非静默丢弃，待产品决策后随对应平台任务实现。
+    #[error("鼠标侧键暂不支持作为快捷键: {0}")]
+    MouseKeyUnsupported(String),
     /// 被其他应用占用 / 系统保留（含 macOS 辅助功能权限缺失）。
     #[error("快捷键注册失败（被占用或权限缺失）")]
     RegisterFailed,
     /// 其他平台错误。
     #[error("平台错误: {0}")]
     Platform(String),
+}
+
+/// 组合串 → global-shortcut `Shortcut`（前端 HotkeyInput 契约，T-013 移交修复 2）。
+///
+/// 格式：段为 keyboard-types `Code` 名（如 `"AltRight"`、`"Space"`），以 `+` 连接；
+/// **最后一段为主键，其余段为修饰键**——因此 `"AltRight"`（单修饰键）、
+/// `"ControlLeft+ShiftLeft+Space"`（左右修饰键）均可表达。
+///
+/// 修饰键左右归属说明：Windows `RegisterHotKey` / 通用 Modifier 位无法区分左右，
+/// 左右修饰键统一映射到同一 Modifier 位（平台限制，tech/09 9.2.1）；主键的左右
+/// 归属（如右 Alt 本身作为触发键）由 `Code::AltRight` 精确保留。
+pub fn parse_accelerator(spec: &str) -> Result<Shortcut, HotkeyError> {
+    if matches!(spec, "MouseBack" | "MouseForward") {
+        return Err(HotkeyError::MouseKeyUnsupported(spec.to_string()));
+    }
+    let tokens: Vec<&str> = spec.split('+').map(str::trim).collect();
+    if tokens.iter().any(|token| token.is_empty()) {
+        return Err(HotkeyError::InvalidAccelerator(spec.to_string()));
+    }
+    let (key_token, modifier_tokens) = tokens
+        .split_last()
+        .ok_or_else(|| HotkeyError::InvalidAccelerator(spec.to_string()))?;
+    let mut modifiers = Modifiers::empty();
+    for token in modifier_tokens {
+        modifiers |= modifier_from_token(token)
+            .ok_or_else(|| HotkeyError::InvalidAccelerator(spec.to_string()))?;
+    }
+    let key =
+        Code::from_str(key_token).map_err(|_| HotkeyError::InvalidAccelerator(spec.to_string()))?;
+    Ok(Shortcut::new(Some(modifiers), key))
+}
+
+/// 左右修饰键 → Modifier 位（右侧修饰键与左侧映射到同一位，平台限制见上）。
+fn modifier_from_token(token: &str) -> Option<Modifiers> {
+    match token {
+        "ControlLeft" | "ControlRight" => Some(Modifiers::CONTROL),
+        "AltLeft" | "AltRight" => Some(Modifiers::ALT),
+        "ShiftLeft" | "ShiftRight" => Some(Modifiers::SHIFT),
+        "MetaLeft" | "MetaRight" | "SuperLeft" | "SuperRight" => Some(Modifiers::SUPER),
+        _ => None,
+    }
 }
 
 /// 全局快捷键后端抽象：`register` 成功后事件经构造时给定的通道上报。
@@ -57,11 +104,13 @@ impl HotkeyBackend for TauriHotkeyBackend {
         use tauri_plugin_global_shortcut::ShortcutState;
 
         let events = self.events.clone();
-        let shortcut = accelerator.to_string();
+        // 组合串翻译为 Shortcut（keyboard-types Code 手动构造，支持左右修饰键与
+        // 单修饰键格式；解析失败在此返回 InvalidAccelerator）。
+        let shortcut = parse_accelerator(accelerator)?;
         // 注册全局快捷键：系统级能力，仅监听用户指定的组合键（最小权限见模块头注释）。
         self.app
             .global_shortcut()
-            .on_shortcut(shortcut.as_str(), move |_app, _shortcut, event| {
+            .on_shortcut(shortcut, move |_app, _shortcut, event| {
                 // 回调运行在全局热键线程；try_send 不阻塞，通道满则丢弃该事件。
                 let raw = match event.state {
                     ShortcutState::Pressed => RawHotkeyEvent::Pressed,
@@ -71,13 +120,8 @@ impl HotkeyBackend for TauriHotkeyBackend {
                     tracing::warn!("快捷键事件通道已满，丢弃事件");
                 }
             })
-            .map_err(|err| {
-                if err.to_string().contains("Parse") || err.to_string().contains("parse") {
-                    HotkeyError::InvalidAccelerator(accelerator.to_string())
-                } else {
-                    HotkeyError::RegisterFailed
-                }
-            })
+            // 解析已在上方完成；此处错误只可能是占用 / 权限 / 平台问题。
+            .map_err(|_err| HotkeyError::RegisterFailed)
     }
 
     fn unregister_all(&self) -> Result<(), HotkeyError> {
@@ -144,5 +188,70 @@ pub mod mock {
             self.registered.lock().unwrap().clear();
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_single_modifier_key() {
+        // 单修饰键格式：右 Alt 作为主键（无修饰位）。
+        let shortcut = parse_accelerator("AltRight").unwrap();
+        assert_eq!(shortcut.key, Code::AltRight);
+        assert!(shortcut.mods.is_empty());
+    }
+
+    #[test]
+    fn parse_combo_with_left_right_modifiers() {
+        let shortcut = parse_accelerator("ControlLeft+ShiftLeft+Space").unwrap();
+        assert_eq!(shortcut.key, Code::Space);
+        assert!(shortcut.mods.contains(Modifiers::CONTROL));
+        assert!(shortcut.mods.contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn parse_right_modifiers_map_to_same_bits() {
+        let right = parse_accelerator("ControlRight+AltRight+KeyQ").unwrap();
+        assert_eq!(right.key, Code::KeyQ);
+        assert!(right.mods.contains(Modifiers::CONTROL));
+        assert!(right.mods.contains(Modifiers::ALT));
+        // 左/右修饰键映射到同一 Modifier 位（平台限制，见 parse_accelerator 文档）。
+        let left = parse_accelerator("ControlLeft+AltLeft+KeyQ").unwrap();
+        assert_eq!(right.mods, left.mods);
+    }
+
+    #[test]
+    fn parse_modifier_as_main_key() {
+        // 组合中右 Alt 作为主键、左 Ctrl 作为修饰键。
+        let shortcut = parse_accelerator("ControlLeft+AltRight").unwrap();
+        assert_eq!(shortcut.key, Code::AltRight);
+        assert!(shortcut.mods.contains(Modifiers::CONTROL));
+    }
+
+    #[test]
+    fn parse_unknown_key_is_invalid() {
+        assert!(matches!(
+            parse_accelerator("NotAKey"),
+            Err(HotkeyError::InvalidAccelerator(_))
+        ));
+        assert!(matches!(
+            parse_accelerator("ControlLeft++Space"),
+            Err(HotkeyError::InvalidAccelerator(_))
+        ));
+    }
+
+    #[test]
+    fn parse_mouse_side_keys_explicitly_unsupported() {
+        // 鼠标侧键：显式报不支持（不静默丢弃），错误供服务层转为引导提示。
+        assert!(matches!(
+            parse_accelerator("MouseBack"),
+            Err(HotkeyError::MouseKeyUnsupported(_))
+        ));
+        assert!(matches!(
+            parse_accelerator("MouseForward"),
+            Err(HotkeyError::MouseKeyUnsupported(_))
+        ));
     }
 }

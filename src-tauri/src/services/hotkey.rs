@@ -19,11 +19,13 @@ use tracing::warn;
 
 use crate::error::AppError;
 use crate::events::AppEvent;
-use crate::platform::hotkey::{HotkeyBackend, RawHotkeyEvent};
+use crate::platform::hotkey::{HotkeyBackend, HotkeyError, RawHotkeyEvent};
 use crate::services::config_store::{ConfigSection, ConfigStore, HotkeyConfig, HotkeyMode};
 
 /// 快捷键注册失败错误编号（T-004 SPEC 步骤 5）。
 pub const ERR_REGISTER_FAILED: u32 = 1;
+/// 快捷键串非法（组合格式无法解析，E-HOTKEY-002）。
+pub const ERR_INVALID_SPEC: u32 = 2;
 
 /// 录音控制命令（T-004 SPEC 步骤 1）：快捷键 / 命令层 / 小窗统一出口。
 ///
@@ -131,10 +133,16 @@ impl HotkeyService {
             if let Err(rollback_err) = self.backend.register(&old) {
                 warn!(error = %rollback_err, "回滚旧快捷键也失败");
             }
-            return Err(AppError::Hotkey(
-                ERR_REGISTER_FAILED,
-                format!("快捷键 {} 注册失败（可能被占用）", config.trigger),
-            ));
+            return Err(match err {
+                // 串非法 / 鼠标侧键等输入侧问题：错误编号区分，前端给引导提示。
+                HotkeyError::InvalidAccelerator(_) | HotkeyError::MouseKeyUnsupported(_) => {
+                    AppError::Hotkey(ERR_INVALID_SPEC, err.to_string())
+                }
+                _ => AppError::Hotkey(
+                    ERR_REGISTER_FAILED,
+                    format!("快捷键 {} 注册失败（可能被占用）", config.trigger),
+                ),
+            });
         }
         let mut inner = self.inner.lock().await;
         inner.accelerator = config.trigger.clone();

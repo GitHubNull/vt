@@ -53,6 +53,11 @@ fn main() {
             commands::audio::list_audio_devices,
             commands::inject::inject_text,
             commands::window::show_mini_window,
+            commands::about::get_app_info,
+            commands::about::check_update,
+            commands::about::apply_update,
+            commands::about::export_logs,
+            commands::about::get_legal_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running vibetype application");
