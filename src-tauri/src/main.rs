@@ -206,6 +206,15 @@ async fn init_services(
     );
     post_process.clone().start(event_tx.subscribe());
 
+    // T-012 核心链路编排：管线出口 → 上屏（三级降级链）→ 统一结果反馈
+    // （recording:result Ok / Degraded / Failed）+ NFR-P-03 耗时分解埋点。
+    let pipeline = services::pipeline::PipelineService::new(
+        inject_service.clone(),
+        event_tx.clone(),
+        session_tracker.clone(),
+    );
+    pipeline.clone().start(event_tx.subscribe());
+
     // T-015 系统托盘：双态图标 + 菜单 + 左键唤起小窗 + 录音状态联动。
     tray::setup_tray(app, event_tx.subscribe(), process_start)?;
 
@@ -224,6 +233,7 @@ async fn init_services(
         asr,
         dict,
         post_process,
+        pipeline,
     ))
 }
 

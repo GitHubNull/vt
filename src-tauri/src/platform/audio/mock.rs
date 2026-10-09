@@ -1,4 +1,7 @@
 //! 测试用音频 mock 后端（tech/04 4.5：服务层单测不依赖真实麦克风）。
+// test-utils feature 下编译进 lib（非 cfg(test)）：unwrap 仅出现在测试替身
+// （锁中毒 / 通道满即测试逻辑错误，panic 可接受），与 cfg(test) 语义一致。
+#![allow(clippy::unwrap_used)]
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

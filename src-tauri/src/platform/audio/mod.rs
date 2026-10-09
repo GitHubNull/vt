@@ -82,11 +82,12 @@ pub trait AudioBackend: Send + Sync {
 }
 
 mod cpal_backend;
-#[cfg(test)]
+// test-utils：集成测试（tests/）与基准（benches/）共享 mock（T-012）。
+#[cfg(any(test, feature = "test-utils"))]
 mod mock;
 
 pub use cpal_backend::CpalAudioBackend;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub use mock::MockAudioBackend;
 
 /// 三平台默认后端：cpal（tech/04 4.5 工厂函数）。

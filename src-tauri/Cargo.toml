@@ -59,6 +59,18 @@ core-foundation = "0.9"
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 x11rb = "0.13"
 
+[features]
+# T-012：向集成测试（tests/）与基准（benches/）开放平台层 mock
+# （MockAudioBackend / MockTextInjector）。生产构建不带此 feature。
+test-utils = []
+
+[[bench]]
+# T-012 核心链路基准：固定音频样本驱动全链路，输出 P50 / P95（harness = false，
+# 自带 main 与报告输出）。
+name = "pipeline_bench"
+harness = false
+required-features = ["test-utils"]
+
 [lints.clippy]
 # tech/04 4.6：unwrap 警告级（CI 以 -D warnings 升格为错误）
 unwrap_used = "warn"

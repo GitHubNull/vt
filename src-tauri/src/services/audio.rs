@@ -1,6 +1,11 @@
 //! AudioService（tech/04 4.4、tech/05 5.3.2）：actor 模式的音频采集服务。
 //!
-//! - 状态机 `Idle / Warming / Recording`，迁移经 `recording:state` 广播（tech/05 5.2）；
+//! - 状态机 `Idle / Warming / Recording / Processing`，迁移经 `recording:state` 广播
+//!   （tech/05 5.2；Processing = 识别 + 后处理 + 上屏在途，T-012 起由本服务持有）；
+//! - 竞态收口（T-012 SPEC 步骤 3）：录音中 / Processing 中再触发开始一律忽略
+//!   （同一时刻只有一个录音会话）；取消在录音中与识别在途（Processing）均生效；
+//!   Processing 的退出唯一出口是 `SessionFinished` 内部事件（上屏完成 / 失败 /
+//!   无效丢弃，由 AsrService / PipelineService 广播）；
 //! - 常驻预热（F-SET-03 可配，默认开）：启动时按配置打开设备流；**非录音状态采样
 //!   直接丢弃**——代码路径上无缓冲、无写盘（NFR-PR-07，见 `handle_frame`）；
 //! - 录音会话：Start 起缓冲帧（容量 = 时长上限 × 实际采样率，上限 5 分钟可配 1–10），
@@ -162,8 +167,9 @@ impl AudioService {
             let has_stream = |handle: &Option<Box<dyn InputStream>>| handle.is_some();
             let mut session: Option<RecordingSession> = None;
             let mut next_session_id = 1u64;
-            // 最近一次交付识别的会话（识别中取消竞态的判定对象，T-010）。
-            let mut last_delivered_session: Option<u64> = None;
+            // 已交付识别、等待终态（SessionFinished）的会话（T-012 Processing 判定对象）：
+            // 上屏链路在途期间再触发开始被忽略，取消使其结果失效。
+            let mut pending_session: Option<u64> = None;
             // 首次触发到首帧的埋点（NFR-P-01 / NFR-P-02）。
             let mut start_instant: Option<Instant> = None;
             let mut last_level_emit = Instant::now() - LEVEL_THROTTLE;
@@ -211,8 +217,11 @@ impl AudioService {
                             || (matches!(command, RecordCommand::Toggle)
                                 && state == RecordingState::Recording);
                         if want_start {
-                            // 同一时刻只有一个录音会话（tech/05 5.2）。
-                            if state == RecordingState::Recording {
+                            // 同一时刻只有一个录音会话（tech/05 5.2）；
+                            // T-012：Processing 中（识别 / 上屏在途）再触发开始同样忽略。
+                            if matches!(state, RecordingState::Recording | RecordingState::Processing)
+                            {
+                                info!(?state, "录音进行中，忽略重复开始命令");
                                 continue;
                             }
                             if !has_stream(&stream_handle) {
@@ -269,9 +278,9 @@ impl AudioService {
                                 &mut last_level_emit,
                             );
                             if let Some(active) = &session {
-                                last_delivered_session = Some(active.id);
+                                pending_session = Some(active.id);
                             }
-                            Self::finish_session(&self.events, &mut session, &mut state, keep_warm);
+                            Self::finish_session(&self.events, &mut session, &mut state);
                             if !keep_warm {
                                 // 非预热：结束即关流，释放设备。
                                 stream_handle = None;
@@ -302,15 +311,25 @@ impl AudioService {
                                     .events
                                     .send(AppEvent::RecordingState { state, mode: None });
                                 info!("录音会话已取消，音频已丢弃");
-                            } else if let Some(last) = last_delivered_session {
-                                // T-010 识别中取消：Stop 与 Cancel 竞态（音频已交付、
-                                // 识别在途）。标记会话取消 → 结果到达时丢弃不上屏。
-                                if self.tracker.cancel(last) {
+                            } else if state == RecordingState::Processing {
+                                // T-012 识别 / 上屏在途取消：标记会话取消（在途结果
+                                // 经识别 / 管线 / 上屏各跳代次检查丢弃，无残留上屏），
+                                // 状态机直接收尾（本会话不会再有 SessionFinished 到达）。
+                                if let Some(pending) = pending_session.take() {
+                                    let _ = self.tracker.cancel(pending);
                                     let _ = self.events.send(AppEvent::RecordingState {
                                         state: RecordingState::Cancelled,
                                         mode: None,
                                     });
-                                    info!(session_id = last, "识别中取消：在途识别结果将丢弃");
+                                    state = if keep_warm {
+                                        RecordingState::Warming
+                                    } else {
+                                        RecordingState::Idle
+                                    };
+                                    let _ = self
+                                        .events
+                                        .send(AppEvent::RecordingState { state, mode: None });
+                                    info!(session_id = pending, "识别 / 上屏在途取消：结果将丢弃");
                                 }
                             }
                         }
@@ -345,37 +364,48 @@ impl AudioService {
                         warn!(error = %err, "麦克风采集流错误");
                         stream_handle = None;
                         reopen_at = Some(Instant::now() + reopen_retry);
-                        // 错误前已到达帧通道的帧仍属本会话，照常入缓冲后随部分结果交付。
-                        Self::drain_pending_frames(
-                            frames_rx.as_mut(),
-                            &self.events,
-                            &self.stats,
-                            &mut session,
-                            &mut last_level_emit,
-                        );
+                        if state == RecordingState::Recording {
+                            // 错误前已到达帧通道的帧仍属本会话，照常入缓冲后随部分结果交付。
+                            Self::drain_pending_frames(
+                                frames_rx.as_mut(),
+                                &self.events,
+                                &self.stats,
+                                &mut session,
+                                &mut last_level_emit,
+                            );
+                            if let Some(active_session) = session.take() {
+                                pending_session = Some(active_session.id);
+                                // 录音中拔出：已采集部分照常交付识别（tech/05 5.6）。
+                                Self::deliver_audio(&self.events, active_session);
+                            }
+                            // T-012：交付后进入 Processing（等 SessionFinished 收尾），
+                            // 不直接回 Idle——设备已断，恢复重试由 tick 在终态后进行。
+                            state = RecordingState::Processing;
+                            let _ = self
+                                .events
+                                .send(AppEvent::RecordingState { state, mode: None });
+                            let _ = self.events.send(AppEvent::RecordingResult(
+                                RecordingResultEvent::Failed {
+                                    code: AppError::Audio(ERR_STREAM_FAILURE, String::new())
+                                        .code(),
+                                    message: "麦克风异常断开，请检查设备".to_string(),
+                                },
+                            ));
+                        }
+                        // 帧 / 错误通道必须清理：接收端随流失效，select! 轮询 dead
+                        // 通道会立即返回 None 造成忙轮询。录音中的排空必须发生在清理前。
                         frames_rx = None;
                         errors_rx = None;
-                        if let Some(active_session) = session.take() {
-                            last_delivered_session = Some(active_session.id);
-                            // 录音中拔出：已采集部分照常交付识别（tech/05 5.6）。
-                            Self::deliver_audio(&self.events, active_session);
-                        }
-                        state = RecordingState::Idle;
-                        let _ = self.events.send(AppEvent::RecordingState { state, mode: None });
-                        let _ = self.events.send(AppEvent::RecordingResult(
-                            RecordingResultEvent::Failed {
-                                code: AppError::Audio(ERR_STREAM_FAILURE, String::new()).code(),
-                                message: "麦克风异常断开，请检查设备".to_string(),
-                            },
-                        ));
+                        // 非录音状态（Warming / Processing）的流错误：只重置流句柄并
+                        // 安排重试，不动状态机（Processing 的收尾仍等 SessionFinished）。
                     }
                     config_event = config_rx.recv() => {
                         match config_event {
                             Ok(AppEvent::ConfigChanged { section: ConfigSection::Audio }) => {
                                 let audio_config = self.config.get().await.audio;
                                 let new_keep_warm = audio_config.keep_warm;
-                                if state == RecordingState::Recording {
-                                    // 录音中不切流：会话结束后应用新设备。
+                                if matches!(state, RecordingState::Recording | RecordingState::Processing) {
+                                    // 录音 / 处理中不切流：会话终态后应用新设备。
                                     pending_device_update = true;
                                 } else {
                                     // 预热开关或设备选择变化：重开流应用新配置。
@@ -410,6 +440,24 @@ impl AudioService {
                                 }
                                 keep_warm = new_keep_warm;
                             }
+                            Ok(AppEvent::SessionFinished { session_id }) => {
+                                // T-012 会话终态（上屏完成 / 失败 / 无效丢弃）：
+                                // Processing 的唯一出口，状态回退 Idle / Warming。
+                                if state == RecordingState::Processing
+                                    && pending_session == Some(session_id)
+                                {
+                                    pending_session = None;
+                                    state = if keep_warm {
+                                        RecordingState::Warming
+                                    } else {
+                                        RecordingState::Idle
+                                    };
+                                    let _ = self
+                                        .events
+                                        .send(AppEvent::RecordingState { state, mode: None });
+                                    info!(session_id, "上屏链路完成，状态回退");
+                                }
+                            }
                             Ok(_) => {}
                             Err(_) => break,
                         }
@@ -433,14 +481,9 @@ impl AudioService {
                                     &mut last_level_emit,
                                 );
                                 if let Some(active) = &session {
-                                    last_delivered_session = Some(active.id);
+                                    pending_session = Some(active.id);
                                 }
-                                Self::finish_session(
-                                    &self.events,
-                                    &mut session,
-                                    &mut state,
-                                    keep_warm,
-                                );
+                                Self::finish_session(&self.events, &mut session, &mut state);
                                 if !keep_warm {
                                     stream_handle = None;
                                     frames_rx = None;
@@ -449,8 +492,11 @@ impl AudioService {
                                 start_instant = None;
                             }
                         }
-                        // 预热 / 热插拔恢复：流缺失且到了重试时刻。
-                        if !has_stream(&stream_handle) && state != RecordingState::Recording {
+                        // 预热 / 热插拔恢复：流缺失且到了重试时刻（Processing 期间
+                        // 不重开——保持状态机语义，等 SessionFinished 后再恢复）。
+                        if !has_stream(&stream_handle)
+                            && !matches!(state, RecordingState::Recording | RecordingState::Processing)
+                        {
                             let due = reopen_at.is_none_or(|at| Instant::now() >= at)
                                 && (keep_warm || pending_device_update);
                             if due {
@@ -550,26 +596,23 @@ impl AudioService {
         }
     }
 
-    /// 结束会话：缓冲打包经内部事件交给 AsrService（T-006 消费），状态回退。
+    /// 结束会话：缓冲打包经内部事件交给 AsrService（T-006 消费），
+    /// 状态进入 Processing（识别 + 后处理 + 上屏在途，tech/05 5.2）；
+    /// 回退 Idle / Warming 的唯一出口是 `SessionFinished`（T-012）。
     fn finish_session(
         events: &broadcast::Sender<AppEvent>,
         session: &mut Option<RecordingSession>,
         state: &mut RecordingState,
-        keep_warm: bool,
     ) {
         if let Some(active_session) = session.take() {
             Self::deliver_audio(events, active_session);
         }
-        *state = if keep_warm {
-            RecordingState::Warming
-        } else {
-            RecordingState::Idle
-        };
+        *state = RecordingState::Processing;
         let _ = events.send(AppEvent::RecordingState {
             state: *state,
             mode: None,
         });
-        info!("录音会话结束");
+        info!("录音会话结束，进入识别中（Processing）");
     }
 
     /// 交付已采集音频（内部事件 AudioReady；样本共享 Arc，零拷贝）。
@@ -602,6 +645,7 @@ mod tests {
     struct TestEnv {
         backend: Arc<MockAudioBackend>,
         config: ConfigStore,
+        events_tx: broadcast::Sender<AppEvent>,
         events_rx: broadcast::Receiver<AppEvent>,
         cmd_tx: mpsc::Sender<RecordCommand>,
         stats: Arc<AudioStats>,
@@ -641,11 +685,17 @@ mod tests {
         TestEnv {
             backend,
             config,
+            events_tx,
             events_rx,
             cmd_tx,
             stats,
             tracker,
         }
+    }
+
+    /// 模拟上屏链路终态（T-012：真实环境由 PipelineService / AsrService 广播）。
+    fn finish_processing(env: &TestEnv, session_id: u64) {
+        let _ = env.events_tx.send(AppEvent::SessionFinished { session_id });
     }
 
     /// 收集事件流中匹配谓词的下一个事件（带超时，避免测试挂死）。
@@ -723,16 +773,25 @@ mod tests {
         .await;
         match ready {
             AppEvent::AudioReady {
+                session_id,
                 samples,
                 sample_rate,
-                ..
             } => {
+                assert_eq!(session_id, 1);
                 assert_eq!(samples.len(), 640);
                 assert_eq!(sample_rate, 16_000);
             }
             other => panic!("期望 AudioReady，实际 {other:?}"),
         }
-        // 非预热：结束回 Idle 并关流。
+        // T-012：交付后进入 Processing（识别 / 上屏在途），不回 Idle。
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Processing),
+        )
+        .await;
+        // 上屏链路终态（SessionFinished）后回 Idle 并关流。
+        finish_processing(&env, 1);
         next_event(
             &mut env.events_rx,
             Duration::from_secs(2),
@@ -759,11 +818,22 @@ mod tests {
         .await;
         env.backend.push_frame(vec![0.1; 160]);
         env.cmd_tx.send(RecordCommand::Toggle).await.unwrap();
-        next_event(&mut env.events_rx, Duration::from_secs(2), |event| {
+        let ready = next_event(&mut env.events_rx, Duration::from_secs(2), |event| {
             matches!(event, AppEvent::AudioReady { .. })
         })
         .await;
-        // 预热模式结束回 Warming。
+        let session_id = match ready {
+            AppEvent::AudioReady { session_id, .. } => session_id,
+            other => panic!("期望 AudioReady，实际 {other:?}"),
+        };
+        // T-012：交付后进入 Processing；终态（SessionFinished）后回 Warming。
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Processing),
+        )
+        .await;
+        finish_processing(&env, session_id);
         next_event(
             &mut env.events_rx,
             Duration::from_secs(2),
@@ -861,7 +931,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn new_session_invalidates_stale_inflight_session() {
+    async fn start_during_processing_is_ignored_until_session_finished() {
+        // T-012 竞态收口：Processing（识别 / 上屏在途）中再触发开始一律忽略；
+        // 会话终态（SessionFinished）回退后新的开始才被接受。
         let mut env = setup(true).await;
         next_event(
             &mut env.events_rx,
@@ -881,7 +953,33 @@ mod tests {
             matches!(event, AppEvent::AudioReady { session_id: 1, .. })
         })
         .await;
-        // 上个会话识别期间开始了新会话：旧会话结果过期（代次丢弃）。
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Processing),
+        )
+        .await;
+        // Processing 中触发开始：忽略（状态保持 Processing，不产生新的 Recording）。
+        env.cmd_tx.send(RecordCommand::Start).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !matches!(
+                env.events_rx.try_recv(),
+                Ok(AppEvent::RecordingState {
+                    state: RecordingState::Recording,
+                    ..
+                })
+            ),
+            "Processing 中重复开始必须被忽略"
+        );
+        // 上屏链路终态后：新的开始被接受（会话 1 随之过期）。
+        finish_processing(&env, 1);
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Warming),
+        )
+        .await;
         env.cmd_tx.send(RecordCommand::Start).await.unwrap();
         next_event(
             &mut env.events_rx,
@@ -891,6 +989,8 @@ mod tests {
         .await;
         assert!(env.tracker.is_valid(2));
         assert!(!env.tracker.is_valid(1), "新会话开始后旧在途会话必须过期");
+        // 清理：结束会话 2（走完整终态流程）。
+        env.cmd_tx.send(RecordCommand::Cancel).await.unwrap();
     }
 
     #[tokio::test]
@@ -913,19 +1013,23 @@ mod tests {
         // 模拟录音中拔出麦克风。
         env.backend.push_stream_error();
         // 已采集部分照常交付（tech/05 5.6）。
-        next_event_labelled(
+        let ready = next_event_labelled(
             &mut env.events_rx,
             Duration::from_secs(2),
             |event| matches!(event, AppEvent::AudioReady { .. }),
             "AudioReady(部分交付)",
         )
         .await;
-        // 状态回退 Idle（错误分支先广播 Idle 再广播 Failed，按序等待）。
+        let session_id = match ready {
+            AppEvent::AudioReady { session_id, .. } => session_id,
+            other => panic!("期望 AudioReady，实际 {other:?}"),
+        };
+        // T-012：交付后进入 Processing（错误分支先广播 Processing 再广播 Failed，按序等待）。
         next_event_labelled(
             &mut env.events_rx,
             Duration::from_secs(2),
-            is_state(RecordingState::Idle),
-            "Idle(回退)",
+            is_state(RecordingState::Processing),
+            "Processing(设备错误交付)",
         )
         .await;
         // 双端提示：Failed 事件带错误编号 E-AUDIO-002（NFR-R-03）。
@@ -947,12 +1051,14 @@ mod tests {
             }
             other => panic!("期望 Failed 事件，实际 {other:?}"),
         }
-        // 重试后热插拔恢复（reopen_retry = 20 ms）。
+        // 会话终态（SessionFinished）：预热模式直接回 Warming（终态回退与热插拔
+        // 恢复合为一次迁移），tick 随后重试开流（reopen_retry = 20 ms）。
+        finish_processing(&env, session_id);
         next_event_labelled(
             &mut env.events_rx,
             Duration::from_secs(2),
             is_state(RecordingState::Warming),
-            "Warming(热插拔恢复)",
+            "Warming(终态回退+热插拔恢复)",
         )
         .await;
     }

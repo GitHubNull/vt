@@ -113,6 +113,11 @@ onMounted(async () => {
           recording.value = false
           showFeedback(t.mini.status.cancelled, 1200)
           break
+        case 'processing':
+          // T-012：后端显式广播识别中（录音结束 → 上屏完成），按钮进入 busy 态。
+          if (recording.value) phase.value = 'processing'
+          recording.value = false
+          break
         case 'idle':
         case 'warming':
           if (recording.value) phase.value = 'processing'

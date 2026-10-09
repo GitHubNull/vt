@@ -552,6 +552,8 @@ impl AsrService {
                                 code: err.code(),
                                 message: err.message().to_string(),
                             }));
+                    // 会话终态：无 Recognized 产出，由本服务广播（T-012）。
+                    let _ = self.events.send(AppEvent::SessionFinished { session_id });
                     return;
                 }
             }
@@ -590,6 +592,8 @@ impl AsrService {
                     code: AppError::Asr(ERR_INFERENCE, String::new()).code(),
                     message: "未能识别出有效内容，请靠近麦克风重试".to_string(),
                 }));
+                // 会话终态：无 Recognized 产出，由本服务广播（T-012）。
+                let _ = events.send(AppEvent::SessionFinished { session_id });
                 return;
             }
             // 识别文本 → 后处理管线（T-011 消费；上屏在 T-012 串联）。

@@ -17,11 +17,12 @@ use serde::Serialize;
 use thiserror::Error;
 
 mod enigo_impl;
-#[cfg(test)]
+// test-utils：集成测试（tests/）与基准（benches/）共享 mock（T-012）。
+#[cfg(any(test, feature = "test-utils"))]
 mod mock;
 
 pub use enigo_impl::EnigoTextInjector;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub use mock::MockTextInjector;
 
 /// 平台后端错误。

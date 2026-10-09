@@ -1,4 +1,7 @@
 //! 测试用文本注入 mock（tech/04 4.5：服务层单测不依赖真实输入设备 / 显示服务器）。
+// test-utils feature 下编译进 lib（非 cfg(test)）：unwrap 仅出现在测试替身
+// （锁中毒即测试逻辑错误，panic 可接受），与 cfg(test) 语义一致。
+#![allow(clippy::unwrap_used)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;

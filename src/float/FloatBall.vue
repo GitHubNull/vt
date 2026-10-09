@@ -234,6 +234,10 @@ onMounted(async () => {
           window.clearTimeout(watchdog)
           if (phase.value !== 'boot') enterFeedback('cancelled')
           break
+        case 'processing':
+          // T-012：后端显式广播识别中（录音结束 → 上屏完成），show 三点加载。
+          if (phase.value === 'recording') phase.value = 'processing'
+          break
         case 'idle':
         case 'warming':
           // 录音结束进入识别：show 三点加载，等待 recording:result。

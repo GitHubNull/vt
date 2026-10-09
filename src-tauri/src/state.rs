@@ -10,6 +10,7 @@ use crate::services::config_store::ConfigStore;
 use crate::services::dict::DictService;
 use crate::services::hotkey::RecordCommand;
 use crate::services::inject::InjectService;
+use crate::services::pipeline::PipelineService;
 use crate::services::post_process::PostProcess;
 
 /// 应用全局状态（各服务句柄聚合）。
@@ -30,9 +31,13 @@ pub struct AppState {
     pub dict: DictService,
     /// 后处理管线（T-011）：识别文本 → 管线 → 出口事件。
     pub post_process: Arc<PostProcess>,
+    /// 链路编排（T-012）：管线出口 → 上屏 → 统一结果反馈 + 耗时埋点。
+    pub pipeline: Arc<PipelineService>,
 }
 
 impl AppState {
+    /// 句柄聚合构造：参数即服务清单（tech/04 4.1），随服务增长自然扩展。
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: ConfigStore,
         record_tx: mpsc::Sender<RecordCommand>,
@@ -41,6 +46,7 @@ impl AppState {
         asr: Arc<AsrService>,
         dict: DictService,
         post_process: Arc<PostProcess>,
+        pipeline: Arc<PipelineService>,
     ) -> Self {
         Self {
             config,
@@ -50,6 +56,7 @@ impl AppState {
             asr,
             dict,
             post_process,
+            pipeline,
         }
     }
 }

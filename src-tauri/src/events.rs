@@ -54,7 +54,7 @@ pub enum DownloadStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RecordingResultEvent {
-    /// 识别完成（管线出口，`text` 为后处理后的最终文本；上屏在 T-012 串联）。
+    /// 上屏成功（T-012：`text` 为后处理后的最终文本，已由 InjectService 输入目标应用）。
     Ok { text: String },
     /// 降级完成（如走剪贴板兜底），`reason` 说明降级路径。
     Degraded { reason: String },
@@ -88,8 +88,12 @@ pub enum AppEvent {
     /// 识别完成（内部事件，仅后处理管线消费，不转发前端；T-011 接入）。
     /// 隐私（NFR-S-02）：识别文本只经事件通道传递，绝不写入日志。
     Recognized { session_id: u64, text: String },
-    /// 后处理管线出口（内部事件，T-012 上屏消费；T-011 起由管线广播）。
+    /// 后处理管线出口（内部事件，T-012 上屏编排消费；T-011 起由管线广播）。
     PipelineOutput { session_id: u64, text: String },
+    /// 录音会话终态（内部事件，T-012）：识别 / 后处理 / 上屏编排任一环节走到
+    /// 终态（上屏完成、失败反馈、无效丢弃）时广播；AudioService 消费后从
+    /// Processing 回退到 Idle / Warming（状态机收尾的唯一出口）。
+    SessionFinished { session_id: u64 },
     /// 模型下载进度。
     ModelDownloadProgress {
         model_id: String,
@@ -117,6 +121,7 @@ impl AppEvent {
             Self::AudioReady { .. } => None,
             Self::Recognized { .. } => None,
             Self::PipelineOutput { .. } => None,
+            Self::SessionFinished { .. } => None,
             Self::ModelDownloadProgress { .. } => Some("model:progress"),
             Self::AsrNotice { .. } => Some("asr:notice"),
             Self::DictChanged => Some("dict:changed"),

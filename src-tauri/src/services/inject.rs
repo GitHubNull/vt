@@ -35,6 +35,7 @@ pub trait Notifier: Send + Sync {
 }
 
 /// InjectService：降级链编排。平台调用为同步阻塞操作，统一进 `spawn_blocking`。
+#[derive(Clone)]
 pub struct InjectService {
     injector: Arc<dyn TextInjector>,
     notifier: Arc<dyn Notifier>,

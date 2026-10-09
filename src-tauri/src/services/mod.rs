@@ -12,6 +12,7 @@ pub mod esc_cancel;
 pub mod hotkey;
 pub mod inject;
 pub mod log;
+pub mod pipeline;
 pub mod post_process;
 pub mod session;
 pub mod update;

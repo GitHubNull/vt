@@ -9,7 +9,7 @@
 //! - 规则 / 开关缓存：Stage 的 `process` 为同步方法，规则快照与开关在 `refresh` 中
 //!   异步刷新（`dict:changed` / `config:changed(dict)` 事件驱动）；
 //! - 管线接入：消费 AsrService 的 `Recognized` → 管线 → 广播 `PipelineOutput`
-//!   （T-012 上屏消费）+ `recording:result { Ok, text }`（前端反馈）。
+//!   （T-012 由 PipelineService 消费：上屏 + 统一结果反馈 + 耗时埋点）。
 //!
 //! 隐私（NFR-S-02）：管线只经事件通道传递文本，绝不写日志。
 
@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tracing::info;
 
-use crate::events::{AppEvent, RecordingResultEvent};
+use crate::events::AppEvent;
 use crate::services::config_store::{ConfigSection, ConfigStore};
 use crate::services::dict::{DictService, ReplaceRule};
 use crate::services::session::SessionTracker;
@@ -239,10 +239,12 @@ impl PostProcess {
 
     /// 对单条识别文本执行管线并广播出口。
     async fn process_recognized(&self, session_id: u64, text: String) {
-        // T-010 上屏前最后检查：会话已取消或已过期（识别期间开始了新会话），
-        // 管线出口丢弃——保证无效结果不会到达上屏（T-012 消费 PipelineOutput）。
+        // T-010 管线出口检查：会话已取消或已过期（识别期间开始了新会话），
+        // 结果丢弃——保证无效结果不会到达上屏（T-012 编排层上屏前还会最后检查一次）。
         if !self.tracker.is_valid(session_id) {
             info!(session_id, "会话已取消或过期，管线出口丢弃（不上屏）");
+            // 会话在此截断：广播终态让 AudioService 状态机收尾（T-012）。
+            let _ = self.events.send(AppEvent::SessionFinished { session_id });
             return;
         }
         let mut ctx = PipelineContext::new(session_id, text);
@@ -255,18 +257,11 @@ impl PostProcess {
                 break; // 短路：后续 Stage 不执行（v0.5 AI Stage 预留）
             }
         }
-        let final_text = ctx.text;
-        // 管线出口（内部事件，T-012 上屏消费）。
+        // 管线出口（内部事件，T-012 PipelineService 消费：上屏 + 结果反馈 + 埋点）。
         let _ = self.events.send(AppEvent::PipelineOutput {
             session_id,
-            text: final_text.clone(),
+            text: ctx.text,
         });
-        // 前端结果反馈（tech/05 5.5）。
-        let _ = self
-            .events
-            .send(AppEvent::RecordingResult(RecordingResultEvent::Ok {
-                text: final_text,
-            }));
     }
 }
 
