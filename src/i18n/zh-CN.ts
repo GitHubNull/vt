@@ -278,10 +278,14 @@ export const zhCN = {
     keys: {
       AltRight: '右 Alt',
       AltRightMac: '右 Option',
-      ControlLeft: '左 Ctrl',
+      AltLeft: 'Alt',
+      ControlLeft: 'Ctrl',
       ControlRight: '右 Ctrl',
-      ShiftLeft: '左 Shift',
+      ShiftLeft: 'Shift',
       ShiftRight: '右 Shift',
+      MetaLeft: 'Meta',
+      MetaLeftMac: '⌘ Command',
+      MetaRight: '右 Meta',
       Escape: 'Esc',
       Space: '空格',
       Enter: '回车',
@@ -299,6 +303,9 @@ export const zhCN = {
       MouseBack: '鼠标侧键（后退）',
       MouseForward: '鼠标侧键（前进）',
     },
+  },
+  notices: {
+    configRecovered: '配置文件损坏，已自动回退到上次良好的配置或默认配置。',
   },
   mini: {
     placeholder: '语音输入小窗（占位）',

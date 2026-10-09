@@ -110,6 +110,17 @@
   --p-button-link-color: var(--p-primary-500);
   --p-button-link-hover-color: var(--p-primary-600);
   --p-button-link-active-color: var(--p-primary-700);
+  --p-button-danger-background: #dc2626;
+  --p-button-danger-hover-background: #b91c1c;
+  --p-button-danger-active-background: #991b1b;
+  --p-button-danger-border-color: #dc2626;
+  --p-button-danger-hover-border-color: #b91c1c;
+  --p-button-danger-active-border-color: #991b1b;
+  --p-button-danger-color: #ffffff;
+  --p-button-danger-hover-color: #ffffff;
+  --p-button-danger-active-color: #ffffff;
+  --p-button-danger-focus-ring-color: #dc2626;
+  --p-button-danger-focus-ring-shadow: var(--p-focus-ring-shadow);
 
   /* ---- ToggleSwitch ---- */
   --p-toggleswitch-width: 2.5rem;

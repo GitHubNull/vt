@@ -280,10 +280,14 @@ export const enUS: Messages = {
     keys: {
       AltRight: 'Right Alt',
       AltRightMac: 'Right Option',
-      ControlLeft: 'Left Ctrl',
+      AltLeft: 'Alt',
+      ControlLeft: 'Ctrl',
       ControlRight: 'Right Ctrl',
-      ShiftLeft: 'Left Shift',
+      ShiftLeft: 'Shift',
       ShiftRight: 'Right Shift',
+      MetaLeft: 'Meta',
+      MetaLeftMac: '⌘ Command',
+      MetaRight: 'Right Meta',
       Escape: 'Esc',
       Space: 'Space',
       Enter: 'Enter',
@@ -301,6 +305,9 @@ export const enUS: Messages = {
       MouseBack: 'Mouse side button (back)',
       MouseForward: 'Mouse side button (forward)',
     },
+  },
+  notices: {
+    configRecovered: 'The config file was corrupted and has been restored from the last good copy or defaults.',
   },
   mini: {
     placeholder: 'Voice input mini window (placeholder)',
