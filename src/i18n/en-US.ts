@@ -373,9 +373,29 @@ export const enUS: Messages = {
     configRecovered: 'The config file was corrupted and has been restored from the last good copy or defaults.',
   },
   mini: {
+    /** Removed once the mini window page is rewritten in T-009. */
     placeholder: 'Voice input mini window (placeholder)',
+    status: {
+      hold: 'Hold the mic or {key} to talk',
+      toggle: 'Click the mic or press {key} to start',
+      recording: 'Recording…',
+      processing: 'Recognizing…',
+      cancelled: 'Cancelled',
+    },
+    cancel: 'Cancel recording',
+    lastResult: 'Last result',
+    openSettings: 'Open settings',
   },
   float: {
-    placeholder: 'Recording float ball (placeholder)',
+    modeHold: 'Hold',
+    modeToggle: 'Toggle',
+    processing: 'Recognizing',
+    dragCancelHint: 'Release to cancel',
+    feedback: {
+      success: 'Inserted',
+      degraded: 'Inserted raw result',
+      failed: 'Recognition failed',
+      cancelled: 'Cancelled',
+    },
   },
 }

@@ -28,6 +28,7 @@ export function defaultConfig(): AppConfig {
       launch_at_login: false,
       save_voice_dataset: false,
       diagnostic_mode: false,
+      float_ball_xy: null,
     },
     hotkey: {
       trigger: 'AltRight',

@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "默认能力：本应用三个自有窗口。最小权限（AGENTS.md 3.5）：仅授予前端实际使用的 API——事件监听、悬浮球读取自身窗口位置；对话框与外链打开供设置页使用。",
+  "windows": ["main", "mini", "float"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-outer-position",
+    "dialog:default",
+    "opener:default"
+  ]
+}

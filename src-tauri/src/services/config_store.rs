@@ -107,6 +107,9 @@ pub struct GeneralConfig {
     pub save_voice_dataset: bool,
     /// 诊断模式（debug 日志级别，T-013 设置页开关）。
     pub diagnostic_mode: bool,
+    /// 悬浮球上次拖动位置（T-008 位置记忆；None = 未拖动过，按落点策略初始放置）。
+    #[serde(default)]
+    pub float_ball_xy: Option<[i32; 2]>,
 }
 
 /// 输入与录音设置（F-INPUT-01/02、PRD 3.8.2）。

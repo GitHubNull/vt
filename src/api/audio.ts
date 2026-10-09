@@ -9,3 +9,14 @@ import type { AudioDeviceInfo } from './types'
 export async function listAudioDevices(): Promise<AudioDeviceInfo[]> {
   return invoke<AudioDeviceInfo[]>('list_audio_devices')
 }
+
+/** 录音控制命令（T-008 悬浮球取消区、T-009 小窗麦克风按钮、T-010 取消入口）。 */
+export type RecordCommandName = 'start' | 'stop' | 'toggle' | 'cancel'
+
+/**
+ * 发送录音控制命令（后端契约 `control_recording`）：与快捷键共用同一状态机，
+ * 录音中重复 start 由后端忽略（单会话互斥）。
+ */
+export async function controlRecording(command: RecordCommandName): Promise<void> {
+  await invoke('control_recording', { command })
+}

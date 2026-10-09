@@ -47,7 +47,13 @@ fn main() {
             commands::hotkey::trigger_test_hotkey,
             commands::audio::list_audio_devices,
             commands::inject::inject_text,
+            commands::audio::control_recording,
             commands::window::show_mini_window,
+            commands::window::show_settings_window,
+            // T-008 悬浮球窗口管理。
+            commands::window::show_float,
+            commands::window::hide_float,
+            commands::window::move_float,
             commands::about::get_app_info,
             commands::about::check_update,
             commands::about::apply_update,
@@ -182,6 +188,13 @@ async fn init_services(
 
     // T-015 系统托盘：双态图标 + 菜单 + 左键唤起小窗 + 录音状态联动。
     tray::setup_tray(app, event_tx.subscribe(), process_start)?;
+
+    // T-008 悬浮球：录音进入 Recording 时显示（配置开启前提下），不抢焦点。
+    vibetype::windows::spawn_float_manager(
+        app.handle().clone(),
+        config.clone(),
+        event_tx.subscribe(),
+    );
 
     Ok(AppState::new(
         config,

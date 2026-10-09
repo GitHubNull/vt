@@ -26,6 +26,8 @@ export interface GeneralConfig {
   save_voice_dataset: boolean
   /** 诊断模式（debug 日志级别，T-013）。 */
   diagnostic_mode: boolean
+  /** 悬浮球上次拖动位置 [x, y]（T-008 位置记忆；null = 未拖动过）。 */
+  float_ball_xy: [number, number] | null
 }
 
 /**
@@ -224,3 +226,21 @@ export type RecordingResultPayload =
   | { status: 'ok'; text: string }
   | { status: 'degraded'; reason: string }
   | { status: 'failed'; code: string; message: string }
+
+/* ---- 录音状态事件（T-008/T-009/T-010 消费，后端 events.rs AppEvent 序列化形态） ---- */
+
+export type RecordingStateName = 'idle' | 'warming' | 'recording' | 'processing' | 'cancelled'
+
+/** recording:state 事件载荷：`{ type: "recording_state", state, mode }`。 */
+export interface RecordingStatePayload {
+  type: 'recording_state'
+  state: RecordingStateName
+  /** 开始录音时的触发模式（仅 Recording 状态携带）。 */
+  mode: HotkeyMode | null
+}
+
+/** recording:level 事件载荷：`{ type: "recording_level", level }`（RMS 0~1）。 */
+export interface RecordingLevelPayload {
+  type: 'recording_level'
+  level: number
+}

@@ -371,10 +371,30 @@ export const zhCN = {
     configRecovered: '配置文件损坏，已自动回退到上次良好的配置或默认配置。',
   },
   mini: {
+    /** T-009 重写小窗页面后移除。 */
     placeholder: '语音输入小窗（占位）',
+    status: {
+      hold: '按住麦克风或 {key} 说话',
+      toggle: '点击麦克风或按 {key} 开始',
+      recording: '正在录音…',
+      processing: '识别中…',
+      cancelled: '已取消',
+    },
+    cancel: '取消录音',
+    lastResult: '上次结果',
+    openSettings: '打开设置',
   },
   float: {
-    placeholder: '录音悬浮球（占位）',
+    modeHold: '按住',
+    modeToggle: '切换',
+    processing: '识别中',
+    dragCancelHint: '松开取消',
+    feedback: {
+      success: '已上屏',
+      degraded: '已输入原始结果',
+      failed: '识别失败',
+      cancelled: '已取消',
+    },
   },
 }
 
