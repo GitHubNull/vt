@@ -1,0 +1,37 @@
+{
+  "name": "vibetype",
+  "private": true,
+  "version": "0.1.0",
+  "description": "VibeType 码语 —— 隐私优先的 AI 语音输入法",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.2",
+    "@tauri-apps/plugin-dialog": "^2.8.1",
+    "@tauri-apps/plugin-opener": "^2.7.0",
+    "pinia": "^3.0.4",
+    "primeicons": "^7.0.0",
+    "primevue": "^4.5.5",
+    "vue": "^3.5.43",
+    "vue-router": "^5.4.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "eslint": "^10.12.0",
+    "eslint-plugin-vue": "^10.11.1",
+    "prettier": "^3.9.9",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.4",
+    "vitest": "^5.0.3",
+    "vue-tsc": "^3.3.12"
+  }
+}

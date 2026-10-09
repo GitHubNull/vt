@@ -1,0 +1,64 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VibeType",
+  "version": "0.1.0",
+  "identifier": "com.vibetype.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "VibeType 设置",
+        "url": "index.html",
+        "width": 1024,
+        "height": 720,
+        "minWidth": 900,
+        "minHeight": 600
+      },
+      {
+        "label": "mini",
+        "title": "VibeType",
+        "url": "mini.html",
+        "width": 320,
+        "height": 120,
+        "resizable": false,
+        "maximizable": false,
+        "visible": false,
+        "skipTaskbar": true
+      },
+      {
+        "label": "float",
+        "title": "VibeType",
+        "url": "float.html",
+        "width": 96,
+        "height": 96,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "focusable": false,
+        "skipTaskbar": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

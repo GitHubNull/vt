@@ -1,0 +1,12 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen
+pnpm-lock.yaml
+tmp
+# 项目文档由文档任务统一维护格式，不由前端 format 脚本触碰
+doc
+README.md
+AGENTS.md
+DISCLAIMER.md
+LICENSE

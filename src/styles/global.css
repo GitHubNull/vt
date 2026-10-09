@@ -1,0 +1,38 @@
+/* 全局样式入口（tech/03 3.7）：CSS 变量定义在 :root，明暗主题后续通过 data-theme 切换。 */
+:root {
+  --vt-color-primary: #6366f1;
+  --vt-color-bg: #ffffff;
+  --vt-color-text: #1f2933;
+  --vt-color-error: #dc2626;
+  --vt-spacing-md: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--vt-color-bg);
+  color: var(--vt-color-text);
+  font-family:
+    -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+}
+
+.app-shell {
+  padding: var(--vt-spacing-md);
+}
+
+.ping-result {
+  color: var(--vt-color-primary);
+}
+
+.ping-error {
+  color: var(--vt-color-error);
+}

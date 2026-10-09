@@ -73,6 +73,8 @@ out/
 
 # Rust / Tauri
 target/
+src-tauri/target/
+src-tauri/gen/
 Cargo.lock.orig
 
 # Go

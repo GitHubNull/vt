@@ -1,0 +1,2 @@
+# tech/04 4.6：不允许 unwrap / expect（测试与 main.rs 初始化除外）
+warn-on-all-wildcard-imports = true
