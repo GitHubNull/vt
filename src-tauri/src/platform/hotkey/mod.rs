@@ -88,6 +88,8 @@ fn modifier_from_token(token: &str) -> Option<Modifiers> {
 pub trait HotkeyBackend: Send + Sync {
     /// 注册快捷键；事件通过 `RawHotkeyEvent` 通道上报（Pressed / Released）。
     fn register(&self, accelerator: &str) -> Result<(), HotkeyError>;
+    /// 精准注销指定快捷键（T-010：Esc 临时注册注销用，不影响其他注册）。
+    fn unregister(&self, accelerator: &str) -> Result<(), HotkeyError>;
     /// 注销全部已注册快捷键。
     fn unregister_all(&self) -> Result<(), HotkeyError>;
 }
@@ -124,6 +126,15 @@ impl HotkeyBackend for TauriHotkeyBackend {
             .map_err(|_err| HotkeyError::RegisterFailed)
     }
 
+    fn unregister(&self, accelerator: &str) -> Result<(), HotkeyError> {
+        // 精准注销（unregister_all 会连带注销主录音键等其他注册）。
+        let shortcut = parse_accelerator(accelerator)?;
+        self.app
+            .global_shortcut()
+            .unregister(shortcut)
+            .map_err(|err| HotkeyError::Platform(err.to_string()))
+    }
+
     fn unregister_all(&self) -> Result<(), HotkeyError> {
         self.app
             .global_shortcut()
@@ -153,6 +164,10 @@ pub mod mock {
     pub struct MockHotkeyBackend {
         pub registered: Mutex<Vec<String>>,
         pub fail_next: std::sync::atomic::AtomicBool,
+        /// 成功注册次数（T-010 Esc 注册 / 注销配对断言）。
+        pub register_calls: std::sync::atomic::AtomicUsize,
+        /// 注销调用次数（unregister + unregister_all 合计）。
+        pub unregister_calls: std::sync::atomic::AtomicUsize,
     }
 
     impl Default for MockHotkeyBackend {
@@ -160,6 +175,8 @@ pub mod mock {
             Self {
                 registered: Mutex::new(Vec::new()),
                 fail_next: std::sync::atomic::AtomicBool::new(false),
+                register_calls: std::sync::atomic::AtomicUsize::new(0),
+                unregister_calls: std::sync::atomic::AtomicUsize::new(0),
             }
         }
     }
@@ -187,11 +204,25 @@ pub mod mock {
                 .lock()
                 .unwrap()
                 .push(accelerator.to_string());
+            self.register_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn unregister(&self, accelerator: &str) -> Result<(), HotkeyError> {
+            self.registered
+                .lock()
+                .unwrap()
+                .retain(|item| item != accelerator);
+            self.unregister_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
 
         fn unregister_all(&self) -> Result<(), HotkeyError> {
             self.registered.lock().unwrap().clear();
+            self.unregister_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
     }

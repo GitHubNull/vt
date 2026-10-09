@@ -73,7 +73,12 @@ async fn recognize_test_wavs_contains_expected_keywords() {
 
     let (events_tx, _rx) = vibetype::events::channel();
     let config = ConfigStore::load(&dir, events_tx.clone()).unwrap();
-    let service = Arc::new(AsrService::new(models_dir, config, events_tx));
+    let service = Arc::new(AsrService::new(
+        models_dir,
+        config,
+        events_tx,
+        Arc::new(vibetype::services::session::SessionTracker::new()),
+    ));
     service.reload_engine().await.expect("引擎加载失败");
 
     // 官方测试音频与预期关键词（模型发布包 test_wavs，普通话通用文本）。
@@ -110,4 +115,107 @@ async fn model_registry_exposes_two_tiers() {
     let tiers: Vec<ModelTier> = MODELS.iter().map(|meta| meta.tier).collect();
     assert!(tiers.contains(&ModelTier::Speed));
     assert!(tiers.contains(&ModelTier::Accuracy));
+}
+
+#[tokio::test]
+async fn stale_session_result_is_dropped_and_cancelled_result_not_injected() {
+    // T-010：会话代次机制——未 begin 的会话（过期 / 已取消语义）其结果必须被
+    // 识别侧丢弃：静音音频本会产生"空结果 Failed"事件，丢弃后应一片寂静。
+    let Some(cache) = models_cache_dir() else {
+        eprintln!("跳过：未找到模型缓存（tmp/models-cache 或 VT_MODELS_CACHE）");
+        return;
+    };
+    let dir = test_dir("stale-drop");
+    let models_dir = dir.join("models");
+    std::fs::create_dir_all(&models_dir).unwrap();
+    stage_model(&models_dir, "paraformer-zh-int8", &cache);
+
+    let (events_tx, mut events_rx) = vibetype::events::channel();
+    let config = ConfigStore::load(&dir, events_tx.clone()).unwrap();
+    let tracker = Arc::new(vibetype::services::session::SessionTracker::new());
+    let service = Arc::new(AsrService::new(
+        models_dir,
+        config,
+        events_tx.clone(),
+        tracker.clone(),
+    ));
+    service.reload_engine().await.expect("引擎加载失败");
+    service.clone().start(events_tx.subscribe());
+
+    // 会话 42 从未 begin（等价于"识别期间被取消 / 已过期"的竞态结果）。
+    assert!(!tracker.is_valid(42));
+    let _ = events_tx.send(vibetype::events::AppEvent::AudioReady {
+        session_id: 42,
+        sample_rate: 16_000,
+        samples: Arc::new(vec![0.0f32; 16_000]),
+    });
+    // 丢弃路径：连"空结果 Failed"都不会出现（无任何 recording:result）。
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            if let vibetype::events::AppEvent::RecordingResult(_) = events_rx.recv().await.unwrap()
+            {
+                return "result-leaked";
+            }
+        }
+    })
+    .await;
+    assert!(
+        outcome.is_err(),
+        "过期 / 已取消会话的结果必须丢弃（不上屏、无反馈泄漏）"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn valid_session_empty_audio_reports_failed() {
+    // 对照组：有效会话 + 静音音频 → 正常的"空结果 Failed"反馈路径仍工作，
+    // 证明上一个测试的静默确实来自代次丢弃而非其他屏蔽。
+    let Some(cache) = models_cache_dir() else {
+        eprintln!("跳过：未找到模型缓存（tmp/models-cache 或 VT_MODELS_CACHE）");
+        return;
+    };
+    let dir = test_dir("valid-empty");
+    let models_dir = dir.join("models");
+    std::fs::create_dir_all(&models_dir).unwrap();
+    stage_model(&models_dir, "paraformer-zh-int8", &cache);
+
+    let (events_tx, mut events_rx) = vibetype::events::channel();
+    let config = ConfigStore::load(&dir, events_tx.clone()).unwrap();
+    let tracker = Arc::new(vibetype::services::session::SessionTracker::new());
+    let service = Arc::new(AsrService::new(
+        models_dir,
+        config,
+        events_tx.clone(),
+        tracker.clone(),
+    ));
+    service.reload_engine().await.expect("引擎加载失败");
+    service.clone().start(events_tx.subscribe());
+
+    tracker.begin(7);
+    let _ = events_tx.send(vibetype::events::AppEvent::AudioReady {
+        session_id: 7,
+        sample_rate: 16_000,
+        samples: Arc::new(vec![0.0f32; 16_000]),
+    });
+    // 有效会话：识别路径必须执行（不被代次检查丢弃）——推理产出非空文本则走
+    // 内部 Recognized 事件，空结果则走 recording:result Failed；两者任一出现
+    // 都证明结果回调未被丢弃。
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            match events_rx.recv().await.unwrap() {
+                vibetype::events::AppEvent::Recognized { session_id: 7, .. } => {
+                    return "recognized"
+                }
+                vibetype::events::AppEvent::RecordingResult(_) => return "result",
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("有效会话应在超时前产出识别结果（不应被代次检查丢弃）");
+    assert!(
+        outcome == "recognized" || outcome == "result",
+        "有效会话的识别路径必须执行"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

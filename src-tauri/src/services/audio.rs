@@ -25,6 +25,7 @@ use crate::events::{AppEvent, RecordingResultEvent, RecordingState};
 use crate::platform::audio::{AudioBackend, AudioChunk, AudioError, InputStream};
 use crate::services::config_store::{ConfigSection, ConfigStore};
 use crate::services::hotkey::RecordCommand;
+use crate::services::session::SessionTracker;
 
 /// 错误编号：打开输入设备 / 流失败（NFR-R-03 明确提示）。
 pub const ERR_OPEN_STREAM: u32 = 1;
@@ -119,6 +120,8 @@ pub struct AudioService {
     config: ConfigStore,
     events: broadcast::Sender<AppEvent>,
     stats: Arc<AudioStats>,
+    /// 会话代次追踪（T-010）：begin / cancel 的写入方，识别与上屏侧只读判定。
+    tracker: Arc<SessionTracker>,
 }
 
 impl AudioService {
@@ -126,12 +129,14 @@ impl AudioService {
         backend: Arc<dyn AudioBackend>,
         config: ConfigStore,
         events: broadcast::Sender<AppEvent>,
+        tracker: Arc<SessionTracker>,
     ) -> Self {
         Self {
             backend,
             config,
             events,
             stats: Arc::new(AudioStats::default()),
+            tracker,
         }
     }
 
@@ -157,6 +162,8 @@ impl AudioService {
             let has_stream = |handle: &Option<Box<dyn InputStream>>| handle.is_some();
             let mut session: Option<RecordingSession> = None;
             let mut next_session_id = 1u64;
+            // 最近一次交付识别的会话（识别中取消竞态的判定对象，T-010）。
+            let mut last_delivered_session: Option<u64> = None;
             // 首次触发到首帧的埋点（NFR-P-01 / NFR-P-02）。
             let mut start_instant: Option<Instant> = None;
             let mut last_level_emit = Instant::now() - LEVEL_THROTTLE;
@@ -240,6 +247,8 @@ impl AudioService {
                                 capacity,
                                 sample_rate,
                             ));
+                            // T-010：会话代次前进（在途的旧会话结果随之过期）。
+                            self.tracker.begin(next_session_id);
                             next_session_id += 1;
                             start_instant = Some(Instant::now());
                             state = RecordingState::Recording;
@@ -259,6 +268,9 @@ impl AudioService {
                                 &mut session,
                                 &mut last_level_emit,
                             );
+                            if let Some(active) = &session {
+                                last_delivered_session = Some(active.id);
+                            }
                             Self::finish_session(&self.events, &mut session, &mut state, keep_warm);
                             if !keep_warm {
                                 // 非预热：结束即关流，释放设备。
@@ -268,25 +280,39 @@ impl AudioService {
                             }
                             start_instant = None;
                         } else if matches!(command, RecordCommand::Cancel) {
-                            if state != RecordingState::Recording {
-                                continue;
+                            if state == RecordingState::Recording {
+                                if let Some(active) = session.take() {
+                                    // T-010：标记会话取消（识别在途时结果将被丢弃）。
+                                    self.tracker.cancel(active.id);
+                                }
+                                start_instant = None;
+                                let _ = self.events.send(AppEvent::RecordingState {
+                                    state: RecordingState::Cancelled,
+                                    mode: None,
+                                });
+                                state = if keep_warm {
+                                    RecordingState::Warming
+                                } else {
+                                    stream_handle = None;
+                                    frames_rx = None;
+                                    errors_rx = None;
+                                    RecordingState::Idle
+                                };
+                                let _ = self
+                                    .events
+                                    .send(AppEvent::RecordingState { state, mode: None });
+                                info!("录音会话已取消，音频已丢弃");
+                            } else if let Some(last) = last_delivered_session {
+                                // T-010 识别中取消：Stop 与 Cancel 竞态（音频已交付、
+                                // 识别在途）。标记会话取消 → 结果到达时丢弃不上屏。
+                                if self.tracker.cancel(last) {
+                                    let _ = self.events.send(AppEvent::RecordingState {
+                                        state: RecordingState::Cancelled,
+                                        mode: None,
+                                    });
+                                    info!(session_id = last, "识别中取消：在途识别结果将丢弃");
+                                }
                             }
-                            session = None;
-                            start_instant = None;
-                            let _ = self.events.send(AppEvent::RecordingState {
-                                state: RecordingState::Cancelled,
-                                mode: None,
-                            });
-                            state = if keep_warm {
-                                RecordingState::Warming
-                            } else {
-                                stream_handle = None;
-                                frames_rx = None;
-                                errors_rx = None;
-                                RecordingState::Idle
-                            };
-                            let _ = self.events.send(AppEvent::RecordingState { state, mode: None });
-                            info!("录音会话已取消，音频已丢弃");
                         }
                     }
                     chunk = async {
@@ -330,6 +356,7 @@ impl AudioService {
                         frames_rx = None;
                         errors_rx = None;
                         if let Some(active_session) = session.take() {
+                            last_delivered_session = Some(active_session.id);
                             // 录音中拔出：已采集部分照常交付识别（tech/05 5.6）。
                             Self::deliver_audio(&self.events, active_session);
                         }
@@ -405,6 +432,9 @@ impl AudioService {
                                     &mut session,
                                     &mut last_level_emit,
                                 );
+                                if let Some(active) = &session {
+                                    last_delivered_session = Some(active.id);
+                                }
                                 Self::finish_session(
                                     &self.events,
                                     &mut session,
@@ -575,6 +605,7 @@ mod tests {
         events_rx: broadcast::Receiver<AppEvent>,
         cmd_tx: mpsc::Sender<RecordCommand>,
         stats: Arc<AudioStats>,
+        tracker: Arc<SessionTracker>,
     }
 
     async fn setup(keep_warm: bool) -> TestEnv {
@@ -597,10 +628,12 @@ mod tests {
             .unwrap();
 
         let backend = MockAudioBackend::with_default_device();
+        let tracker = Arc::new(SessionTracker::new());
         let service = Arc::new(AudioService::new(
             backend.clone(),
             config.clone(),
             events_tx.clone(),
+            tracker.clone(),
         ));
         let stats = service.stats();
         let (cmd_tx, cmd_rx) = mpsc::channel(8);
@@ -611,6 +644,7 @@ mod tests {
             events_rx,
             cmd_tx,
             stats,
+            tracker,
         }
     }
 
@@ -755,6 +789,9 @@ mod tests {
         )
         .await;
         env.backend.push_frame(vec![0.1; 320]);
+        // T-010：会话代次写入，取消后该会话即失效。
+        let session_id = 1u64;
+        assert!(env.tracker.is_valid(session_id));
         env.cmd_tx.send(RecordCommand::Cancel).await.unwrap();
         next_event(
             &mut env.events_rx,
@@ -767,6 +804,93 @@ mod tests {
             env.events_rx.try_recv(),
             Ok(AppEvent::AudioReady { .. })
         ));
+        // T-010：已取消会话失效，即便有在途结果也会被识别侧丢弃。
+        assert!(!env.tracker.is_valid(session_id));
+    }
+
+    #[tokio::test]
+    async fn cancel_after_stop_marks_inflight_session_invalid() {
+        let mut env = setup(true).await;
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Warming),
+        )
+        .await;
+        // 开始并结束录音：音频交付识别（会话进入在途状态）。
+        env.cmd_tx.send(RecordCommand::Start).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Recording),
+        )
+        .await;
+        env.backend.push_frame(vec![0.2; 320]);
+        env.cmd_tx.send(RecordCommand::Stop).await.unwrap();
+        let ready = next_event(&mut env.events_rx, Duration::from_secs(2), |event| {
+            matches!(event, AppEvent::AudioReady { .. })
+        })
+        .await;
+        let session_id = match ready {
+            AppEvent::AudioReady { session_id, .. } => session_id,
+            other => panic!("期望 AudioReady，实际 {other:?}"),
+        };
+        // 识别在途时取消（Stop 与 Cancel 竞态，T-010 SPEC：识别中取消允许）。
+        env.cmd_tx.send(RecordCommand::Cancel).await.unwrap();
+        next_event_labelled(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Cancelled),
+            "Cancelled(识别中取消)",
+        )
+        .await;
+        assert!(
+            !env.tracker.is_valid(session_id),
+            "在途会话被取消后必须失效（结果丢弃不上屏）"
+        );
+        // 幂等：重复取消不再广播 Cancelled。
+        env.cmd_tx.send(RecordCommand::Cancel).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!matches!(
+            env.events_rx.try_recv(),
+            Ok(AppEvent::RecordingState {
+                state: RecordingState::Cancelled,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn new_session_invalidates_stale_inflight_session() {
+        let mut env = setup(true).await;
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Warming),
+        )
+        .await;
+        env.cmd_tx.send(RecordCommand::Start).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Recording),
+        )
+        .await;
+        env.cmd_tx.send(RecordCommand::Stop).await.unwrap();
+        next_event(&mut env.events_rx, Duration::from_secs(2), |event| {
+            matches!(event, AppEvent::AudioReady { session_id: 1, .. })
+        })
+        .await;
+        // 上个会话识别期间开始了新会话：旧会话结果过期（代次丢弃）。
+        env.cmd_tx.send(RecordCommand::Start).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Recording),
+        )
+        .await;
+        assert!(env.tracker.is_valid(2));
+        assert!(!env.tracker.is_valid(1), "新会话开始后旧在途会话必须过期");
     }
 
     #[tokio::test]

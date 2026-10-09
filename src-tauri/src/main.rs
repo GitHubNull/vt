@@ -123,8 +123,11 @@ async fn init_services(
     // ConfigStore 单例：加载配置（损坏自动回退 .bak / 默认）。
     let config = services::config_store::ConfigStore::load(&config_dir, event_tx.clone())?;
 
-    // 录音控制通道（tech/04 4.2，容量 8）：快捷键 → AudioService。
+    // 录音控制通道（tech/04 4.2，容量 8）：快捷键 / 悬浮球 / 小窗 → AudioService。
     let (record_tx, record_rx) = tokio::sync::mpsc::channel(8);
+
+    // T-010 会话代次追踪：采集 → 识别 → 上屏链路的取消 / 过期判定权威状态。
+    let session_tracker = std::sync::Arc::new(services::session::SessionTracker::new());
 
     // T-004 全局快捷键：注册失败（被占用 / 权限缺失）不致命，错误经事件通知前端。
     let (raw_tx, raw_rx) = tokio::sync::mpsc::channel(8);
@@ -145,12 +148,24 @@ async fn init_services(
     }
     hotkey.start(config.clone(), raw_rx, event_tx.subscribe());
 
+    // T-010 Esc 取消：独立快捷键后端实例（精准注销只影响 Esc，不碰主录音键）；
+    // 录音期间注册、结束 / 取消后注销，避免常驻占用 Esc。
+    let (esc_raw_tx, esc_raw_rx) = tokio::sync::mpsc::channel(8);
+    let esc_backend = platform::hotkey::default_backend(app.handle().clone(), esc_raw_tx);
+    let esc_cancel = std::sync::Arc::new(services::esc_cancel::EscCancelService::new(
+        esc_backend,
+        config.get().await.hotkey.cancel_trigger.clone(),
+        record_tx.clone(),
+    ));
+    esc_cancel.start(esc_raw_rx, event_tx.subscribe());
+
     // T-005 音频采集：actor 消费录音控制命令；预热开启失败自动重试（NFR-R-03）。
     let audio_backend = platform::audio::default_backend();
     let audio = std::sync::Arc::new(services::audio::AudioService::new(
         audio_backend.clone(),
         config.clone(),
         event_tx.clone(),
+        session_tracker.clone(),
     ));
     audio.start(
         record_rx,
@@ -170,6 +185,7 @@ async fn init_services(
         models_dir,
         config.clone(),
         event_tx.clone(),
+        session_tracker.clone(),
     ));
     asr.clone().start(event_tx.subscribe());
 
@@ -182,8 +198,12 @@ async fn init_services(
             message: "替换词典文件损坏，已回退为空词典，请重新添加规则".to_string(),
         });
     }
-    let post_process =
-        services::post_process::PostProcess::new(dict.clone(), config.clone(), event_tx.clone());
+    let post_process = services::post_process::PostProcess::new(
+        dict.clone(),
+        config.clone(),
+        event_tx.clone(),
+        session_tracker.clone(),
+    );
     post_process.clone().start(event_tx.subscribe());
 
     // T-015 系统托盘：双态图标 + 菜单 + 左键唤起小窗 + 录音状态联动。

@@ -21,6 +21,7 @@ use tracing::info;
 use crate::events::{AppEvent, RecordingResultEvent};
 use crate::services::config_store::{ConfigSection, ConfigStore};
 use crate::services::dict::{DictService, ReplaceRule};
+use crate::services::session::SessionTracker;
 
 /// 管线上下文：Stage 间传递的文本与状态。
 #[derive(Debug, Clone)]
@@ -171,6 +172,8 @@ pub struct PostProcess {
     /// 后续 Stage 注册处（v0.5 口令 / AI Stage）。
     extra: Vec<Box<dyn Stage>>,
     events: broadcast::Sender<AppEvent>,
+    /// 会话代次追踪（T-010）：上屏前最后检查，已取消 / 过期会话的管线出口直接丢弃。
+    tracker: Arc<SessionTracker>,
 }
 
 impl PostProcess {
@@ -178,11 +181,13 @@ impl PostProcess {
         dict: DictService,
         config: ConfigStore,
         events: broadcast::Sender<AppEvent>,
+        tracker: Arc<SessionTracker>,
     ) -> Arc<Self> {
         let process = Self {
             replace: ReplaceStage::new(dict, config),
             extra: Vec::new(),
             events,
+            tracker,
         };
         let process = Arc::new(process);
         // 初始缓存：同步阻塞等待首个快照（启动时一次）。
@@ -234,6 +239,12 @@ impl PostProcess {
 
     /// 对单条识别文本执行管线并广播出口。
     async fn process_recognized(&self, session_id: u64, text: String) {
+        // T-010 上屏前最后检查：会话已取消或已过期（识别期间开始了新会话），
+        // 管线出口丢弃——保证无效结果不会到达上屏（T-012 消费 PipelineOutput）。
+        if !self.tracker.is_valid(session_id) {
+            info!(session_id, "会话已取消或过期，管线出口丢弃（不上屏）");
+            return;
+        }
         let mut ctx = PipelineContext::new(session_id, text);
         for stage in self.stages() {
             if !stage.enabled() {

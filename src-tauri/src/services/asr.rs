@@ -29,6 +29,7 @@ use tracing::{info, warn};
 use crate::error::AppError;
 use crate::events::{AppEvent, DownloadStatus, RecordingResultEvent};
 use crate::services::config_store::{ConfigSection, ConfigStore};
+use crate::services::session::SessionTracker;
 
 /// 错误编号：模型未下载 / 无可用模型（引导先下载模型）。
 pub const ERR_MODEL_MISSING: u32 = 1;
@@ -231,6 +232,8 @@ pub struct AsrService {
     download_progress: Arc<RwLock<HashMap<String, DownloadProgress>>>,
     /// 引擎加载互斥：切换 / 删除与推理串行。
     lifecycle: Arc<Mutex<()>>,
+    /// 会话代次追踪（T-010）：结果回调按代次 / 取消标记判过期丢弃。
+    tracker: Arc<SessionTracker>,
 }
 
 impl AsrService {
@@ -238,6 +241,7 @@ impl AsrService {
         models_dir: PathBuf,
         config: ConfigStore,
         events: broadcast::Sender<AppEvent>,
+        tracker: Arc<SessionTracker>,
     ) -> Self {
         Self {
             models_dir,
@@ -248,6 +252,7 @@ impl AsrService {
             downloads: Arc::new(Mutex::new(HashMap::new())),
             download_progress: Arc::new(RwLock::new(HashMap::new())),
             lifecycle: Arc::new(Mutex::new(())),
+            tracker,
         }
     }
 
@@ -408,6 +413,7 @@ impl AsrService {
             downloads: self.downloads.clone(),
             download_progress: self.download_progress.clone(),
             lifecycle: self.lifecycle.clone(),
+            tracker: self.tracker.clone(),
         })
     }
 
@@ -560,6 +566,7 @@ impl AsrService {
         drop(engine_guard);
 
         let events = self.events.clone();
+        let tracker = self.tracker.clone();
         tokio::task::spawn_blocking(move || {
             let started = Instant::now();
             let prepared = resample_to_engine(&samples, sample_rate);
@@ -572,6 +579,12 @@ impl AsrService {
                 elapsed_ms = %started.elapsed().as_millis(),
                 "识别推理完成"
             );
+            // T-010 会话代次检查：识别期间会话被取消或已过期（新会话开始），
+            // 结果丢弃不上屏（音频即弃语义的识别侧兜底）。
+            if !tracker.is_valid(session_id) {
+                info!(session_id, "识别结果已过期或已取消，丢弃");
+                return;
+            }
             if result.text.trim().is_empty() {
                 let _ = events.send(AppEvent::RecordingResult(RecordingResultEvent::Failed {
                     code: AppError::Asr(ERR_INFERENCE, String::new()).code(),
@@ -915,7 +928,12 @@ mod tests {
         let config = ConfigStore::load(&dir, events_tx).unwrap();
         let models_dir = dir.join("models");
         std::fs::create_dir_all(&models_dir).unwrap();
-        let service = AsrService::new(models_dir, config, crate::events::channel().0);
+        let service = AsrService::new(
+            models_dir,
+            config,
+            crate::events::channel().0,
+            std::sync::Arc::new(crate::services::session::SessionTracker::new()),
+        );
         let models = service.list_models().await;
         assert_eq!(models.len(), MODELS.len());
         // 未下载：全部 not downloaded，无激活。
@@ -938,7 +956,12 @@ mod tests {
         std::fs::create_dir_all(&model_dir).unwrap();
         std::fs::write(model_dir.join("model.onnx"), b"corrupted").unwrap();
         std::fs::write(model_dir.join("tokens.txt"), "a 1\n").unwrap();
-        let service = AsrService::new(models_dir, config, crate::events::channel().0);
+        let service = AsrService::new(
+            models_dir,
+            config,
+            crate::events::channel().0,
+            std::sync::Arc::new(crate::services::session::SessionTracker::new()),
+        );
         let models = service.list_models().await;
         let int8 = models
             .iter()
@@ -961,6 +984,7 @@ mod tests {
             dir.join("models"),
             ConfigStore::load(&dir, crate::events::channel().0).unwrap(),
             crate::events::channel().0,
+            std::sync::Arc::new(crate::services::session::SessionTracker::new()),
         );
         let err = service.delete_model("nope".to_string()).await.unwrap_err();
         assert_eq!(err.code(), "E-ASR-007");
