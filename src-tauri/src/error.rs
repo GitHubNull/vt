@@ -3,6 +3,7 @@
 //! 错误编号前缀约定（编号出现在用户可见提示中，编号→文案映射在 src/i18n/）：
 //! - `E-AUDIO-xxx`   音频采集 / 设备错误
 //! - `E-ASR-xxx`     识别引擎错误
+//! - `E-HOTKEY-xxx`  全局快捷键错误
 //! - `E-INJECT-xxx`  文本上屏错误
 //! - `E-CONFIG-xxx`  配置读写错误
 //! - `E-NET-xxx`     网络错误
@@ -18,6 +19,8 @@ use serde::Serialize;
 pub enum AppError {
     #[error("[E-AUDIO-{0:03}] {1}")]
     Audio(u32, String),
+    #[error("[E-HOTKEY-{0:03}] {1}")]
+    Hotkey(u32, String),
     #[error("[E-ASR-{0:03}] {1}")]
     Asr(u32, String),
     #[error("[E-INJECT-{0:03}] {1}")]
@@ -37,6 +40,7 @@ impl AppError {
     pub fn code(&self) -> String {
         match self {
             Self::Audio(n, _) => format!("E-AUDIO-{n:03}"),
+            Self::Hotkey(n, _) => format!("E-HOTKEY-{n:03}"),
             Self::Asr(n, _) => format!("E-ASR-{n:03}"),
             Self::Inject(n, _) => format!("E-INJECT-{n:03}"),
             Self::Config(n, _) => format!("E-CONFIG-{n:03}"),
@@ -50,6 +54,7 @@ impl AppError {
     pub fn message(&self) -> &str {
         match self {
             Self::Audio(_, m)
+            | Self::Hotkey(_, m)
             | Self::Asr(_, m)
             | Self::Inject(_, m)
             | Self::Config(_, m)

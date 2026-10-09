@@ -5,4 +5,5 @@
 //! UpdateService）随对应任务在本目录补充。
 
 pub mod config_store;
+pub mod hotkey;
 pub mod log;

@@ -20,9 +20,10 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             init_logging(app)?;
-            let state = init_services(app)?;
+            let state = tauri::async_runtime::block_on(init_services(app))?;
             app.manage(state);
             tracing::info!("VibeType 后端初始化完成");
             Ok(())
@@ -31,6 +32,7 @@ fn main() {
             commands::system::ping,
             commands::config::get_config,
             commands::config::set_config,
+            commands::hotkey::trigger_test_hotkey,
         ])
         .run(tauri::generate_context!())
         .expect("error while running vibetype application");
@@ -56,8 +58,8 @@ fn init_logging(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 初始化数据目录与核心服务（tech/08 8.1；T-003）。
-fn init_services(app: &mut tauri::App) -> Result<AppState, Box<dyn std::error::Error>> {
+/// 初始化数据目录与核心服务（tech/08 8.1；T-003 / T-004）。
+async fn init_services(app: &mut tauri::App) -> Result<AppState, Box<dyn std::error::Error>> {
     // 首次启动创建配置 / 数据 / 日志三个平台标准目录（tech/08 8.1）。
     let config_dir = app.path().app_config_dir()?;
     let data_dir = app.path().app_data_dir()?;
@@ -77,9 +79,44 @@ fn init_services(app: &mut tauri::App) -> Result<AppState, Box<dyn std::error::E
     spawn_event_bridge(app.handle().clone(), event_tx.clone());
 
     // ConfigStore 单例：加载配置（损坏自动回退 .bak / 默认）。
-    let config = services::config_store::ConfigStore::load(&config_dir, event_tx)?;
+    let config = services::config_store::ConfigStore::load(&config_dir, event_tx.clone())?;
 
-    Ok(AppState::new(config))
+    // 录音控制通道（tech/04 4.2，容量 8）：快捷键 → AudioService（T-005 消费）。
+    let (record_tx, record_rx) = tokio::sync::mpsc::channel(8);
+    // T-004 联调：临时消费者记录日志验证事件流（T-005 起由 AudioService 接管）。
+    spawn_record_command_logger(record_rx);
+
+    // T-004 全局快捷键：注册失败（被占用 / 权限缺失）不致命，错误经事件通知前端。
+    let (raw_tx, raw_rx) = tokio::sync::mpsc::channel(8);
+    let hotkey_backend = platform::hotkey::default_backend(app.handle().clone(), raw_tx);
+    let hotkey = std::sync::Arc::new(services::hotkey::HotkeyService::new(
+        hotkey_backend,
+        event_tx.clone(),
+        record_tx.clone(),
+        &config.get().await.hotkey,
+    ));
+    let hotkey_config = config.get().await.hotkey;
+    if let Err(err) = hotkey.apply_config(&hotkey_config).await {
+        tracing::warn!(code = %err.code(), "快捷键初始注册失败");
+        let _ = event_tx.send(events::AppEvent::HotkeyError {
+            code: err.code(),
+            message: err.message().to_string(),
+        });
+    }
+    hotkey.start(config.clone(), raw_rx, event_tx.subscribe());
+
+    Ok(AppState::new(config, record_tx))
+}
+
+/// 临时联调消费者：把录音控制命令记日志（T-004；T-005 由 AudioService 接管）。
+fn spawn_record_command_logger(
+    mut rx: tokio::sync::mpsc::Receiver<services::hotkey::RecordCommand>,
+) {
+    tauri::async_runtime::spawn(async move {
+        while let Some(cmd) = rx.recv().await {
+            tracing::info!(?cmd, "录音控制命令");
+        }
+    });
 }
 
 /// 事件桥：把服务广播的 AppEvent 转换为 Tauri Event 推给全部窗口（tech/03 3.5）。

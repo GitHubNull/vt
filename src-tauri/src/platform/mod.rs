@@ -4,3 +4,5 @@
 //! 三平台用 `#[cfg(target_os)]` 条件编译提供实现，并附 mock 实现供服务层单测。
 //! 子目录（hotkey / inject / audio / window_info / credentials）随对应任务创建；
 //! 调用 OS API 的位置必须附最小权限注释（AGENTS.md 3.5）。
+
+pub mod hotkey;

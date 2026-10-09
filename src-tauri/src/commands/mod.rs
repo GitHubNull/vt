@@ -4,4 +4,5 @@
 //! 命令按领域分文件（dict.rs / config.rs / ai.rs / device.rs 等，随任务补充）。
 
 pub mod config;
+pub mod hotkey;
 pub mod system;
