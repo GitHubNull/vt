@@ -91,6 +91,16 @@
 
 > 上表"候选 crate"在对应任务 SPEC 中最终确认；引入新依赖须先在本章登记。
 
+### 识别引擎（T-006 最终确认）
+
+| 项目 | 结论 | 选型理由 |
+| --- | --- | --- |
+| 引擎 | `sherpa-rs` 0.6（`static` 特性） | 绑定 sherpa-onnx，静态编译 onnxruntime，纯本地推理断网可用（产品原则 1：本地优先）；C API 稳定，Paraformer 识别器支持 Send + Sync，可安全放入 `spawn_blocking` |
+| 模型 | sherpa-onnx Paraformer 中文 2023-03-28（FunASR 训练），内置两档位：`paraformer-zh-int8`（速度优先，约 223 MB）与 `paraformer-zh`（准确率优先，约 864 MB） | 中文普通话识别效果好（集成测试对官方 test_wavs 实测通过）；同一份归档按量化拆档，兼顾低配置电脑与准确率诉求；模型不入安装包，首启下载（NFR-P-09） |
+| 配套 | `sha2`（模型文件 SHA-256 校验）、`tar` + `bzip2`（归档解包） | 下载后哈希校验，损坏拒绝加载并引导重新下载（T-006 验收） |
+
+集成测试（`src-tauri/tests/asr_recognition.rs`）加载 int8 档位对官方 test_wavs 实测识别，断言实际输出关键词；fp32 档位准确率基准需基准机实测。
+
 ## 2.4 仓库目录结构（实现后）
 
 ```
