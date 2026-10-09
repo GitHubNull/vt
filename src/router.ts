@@ -59,7 +59,7 @@ export const routes: RouteRecordRaw[] = [
       {
         path: 'replace',
         name: 'dict-replace',
-        component: comingSoon,
+        component: () => import('./views/dict/ReplaceDictView.vue'),
         meta: { navChild: { titleKey: 'navChildren.dict.replace' } },
       },
       {
@@ -133,7 +133,7 @@ export const routes: RouteRecordRaw[] = [
       {
         path: 'models',
         name: 'general-models',
-        component: comingSoon,
+        component: () => import('./views/general/ModelsView.vue'),
         meta: { navChild: { titleKey: 'navChildren.general.models' } },
       },
     ],
