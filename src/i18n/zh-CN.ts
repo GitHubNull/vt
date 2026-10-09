@@ -371,8 +371,6 @@ export const zhCN = {
     configRecovered: '配置文件损坏，已自动回退到上次良好的配置或默认配置。',
   },
   mini: {
-    /** T-009 重写小窗页面后移除。 */
-    placeholder: '语音输入小窗（占位）',
     status: {
       hold: '按住麦克风或 {key} 说话',
       toggle: '点击麦克风或按 {key} 开始',

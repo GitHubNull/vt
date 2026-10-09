@@ -373,8 +373,6 @@ export const enUS: Messages = {
     configRecovered: 'The config file was corrupted and has been restored from the last good copy or defaults.',
   },
   mini: {
-    /** Removed once the mini window page is rewritten in T-009. */
-    placeholder: 'Voice input mini window (placeholder)',
     status: {
       hold: 'Hold the mic or {key} to talk',
       toggle: 'Click the mic or press {key} to start',
