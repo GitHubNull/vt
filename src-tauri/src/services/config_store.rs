@@ -175,6 +175,10 @@ pub struct OutputConfig {
     pub paste_input: bool,
     /// 保留识别文本到剪贴板（默认关，上屏后恢复原剪贴板）。
     pub keep_text_in_clipboard: bool,
+    /// 已知"模拟键入响应异常"的应用清单：命中时强制走剪贴板路径（T-007 机制，
+    /// 前台应用识别接入前（v0.5 T-501）恒为空命中）。
+    #[serde(default)]
+    pub compat_clipboard_apps: Vec<String>,
 }
 
 impl Default for OutputConfig {
@@ -186,6 +190,7 @@ impl Default for OutputConfig {
             remove_trailing_punct: true,
             paste_input: true,
             keep_text_in_clipboard: false,
+            compat_clipboard_apps: Vec::new(),
         }
     }
 }

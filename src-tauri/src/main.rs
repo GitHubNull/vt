@@ -21,6 +21,9 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // T-007：剪贴板（粘贴路径备份 / 写入 / 恢复）与系统通知（无焦点兜底）。
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             init_logging(app)?;
             let state = tauri::async_runtime::block_on(init_services(app))?;
@@ -34,6 +37,7 @@ fn main() {
             commands::config::set_config,
             commands::hotkey::trigger_test_hotkey,
             commands::audio::list_audio_devices,
+            commands::inject::inject_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running vibetype application");
@@ -117,7 +121,17 @@ async fn init_services(app: &mut tauri::App) -> Result<AppState, Box<dyn std::er
         services::audio::REOPEN_RETRY,
     );
 
-    Ok(AppState::new(config, record_tx, audio_backend))
+    // T-007 文本上屏：enigo 注入器 + Tauri 通知；三级降级链（服务层编排）。
+    let injector = platform::inject::default_injector(app.handle().clone())?;
+    let notifier = platform::notify::TauriNotifier::new(app.handle().clone());
+    let inject_service = services::inject::InjectService::new(injector, notifier, config.clone());
+
+    Ok(AppState::new(
+        config,
+        record_tx,
+        audio_backend,
+        inject_service,
+    ))
 }
 
 /// 事件桥：把服务广播的 AppEvent 转换为 Tauri Event 推给全部窗口（tech/03 3.5）。

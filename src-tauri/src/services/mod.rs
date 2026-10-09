@@ -7,4 +7,5 @@
 pub mod audio;
 pub mod config_store;
 pub mod hotkey;
+pub mod inject;
 pub mod log;
