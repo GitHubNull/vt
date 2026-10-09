@@ -1,0 +1,969 @@
+//! AsrService（T-006，tech/04 4.4、tech/05 5.3.3）：本地离线 ASR 引擎接入与模型管理。
+//!
+//! - 引擎选型：sherpa-rs（绑定 sherpa-onnx，纯本地推理，断网可用，产品原则 1）；
+//! - 模型注册表：内置推荐模型元数据（id / 名称 / 档位 / 大小 / SHA-256 / 下载地址），
+//!   模型文件存数据目录 `models/<id>/`，不打进安装包（NFR-P-09）；
+//! - 下载（T-006）：reqwest 流式下载模型归档（tar.bz2），边下边解包所需成员，
+//!   进度经 `model:progress` 事件节流广播；支持取消；完成后 SHA-256 校验，
+//!   损坏即删除并拒绝加载，引导重新下载；
+//! - 加载 / 切换 / 删除：`spawn_blocking` 中加载引擎（ParaformerRecognizer，Send + Sync），
+//!   当前模型持久化在配置 `asr.current_model_id`（T-003）；
+//! - 推理消费 `recording:audio_ready`（内部事件）→ `spawn_blocking` 推理 →
+//!   内部事件 `Recognized` 交给后处理管线（T-011）；失败广播 `recording:result`
+//!   Failed + 稳定错误编号（E-ASR-xxx）；
+//! - 性能埋点：模型加载与推理耗时记日志（对照 NFR-P-03/04 预算；日志不含识别文本，NFR-S-02）。
+//!
+//! 隐私（NFR-S-02）：识别文本只经事件通道传递，绝不写入日志；
+//! 推理在本地完成，音频与文本均不出本机。
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
+
+use serde::Serialize;
+use sha2::Digest;
+use tokio::sync::{broadcast, Mutex, RwLock};
+use tracing::{info, warn};
+
+use crate::error::AppError;
+use crate::events::{AppEvent, DownloadStatus, RecordingResultEvent};
+use crate::services::config_store::{ConfigSection, ConfigStore};
+
+/// 错误编号：模型未下载 / 无可用模型（引导先下载模型）。
+pub const ERR_MODEL_MISSING: u32 = 1;
+/// 错误编号：模型加载失败。
+pub const ERR_LOAD_FAILED: u32 = 2;
+/// 错误编号：模型文件哈希校验失败（引导重新下载）。
+pub const ERR_HASH_MISMATCH: u32 = 3;
+/// 错误编号：推理过程失败。
+pub const ERR_INFERENCE: u32 = 4;
+/// 错误编号：删除使用中的模型被拒绝。
+pub const ERR_MODEL_IN_USE: u32 = 5;
+/// 错误编号：下载失败（网络错误等）。
+pub const ERR_DOWNLOAD: u32 = 6;
+/// 错误编号：未知模型 ID。
+pub const ERR_UNKNOWN_MODEL: u32 = 7;
+
+/// 引擎期望的输入采样率（sherpa-rs Paraformer 特征配置固定 16 kHz）。
+pub const ENGINE_SAMPLE_RATE: u32 = 16_000;
+
+/// 下载进度事件节流间隔（避免 1 GB 下载刷爆事件通道）。
+const PROGRESS_THROTTLE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// 模型档位（前端按档位映射说明文案，i18n）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelTier {
+    /// 准确率优先。
+    Accuracy,
+    /// 速度优先 / 低配置电脑推荐。
+    Speed,
+}
+
+/// 内置推荐模型元数据（T-006 SPEC 步骤 2）。
+#[derive(Debug, Clone, Copy)]
+pub struct ModelMeta {
+    /// 稳定模型 ID（配置 `asr.current_model_id` 引用）。
+    pub id: &'static str,
+    /// 模型显示名。
+    pub name: &'static str,
+    /// 适用语言说明。
+    pub languages: &'static str,
+    /// 档位。
+    pub tier: ModelTier,
+    /// 模型文件大小（字节，用于进度与磁盘预估）。
+    pub size_bytes: u64,
+    /// 模型文件 SHA-256（下载后校验；损坏拒绝加载）。
+    pub sha256: &'static str,
+    /// 模型归档下载地址（官方 GitHub Release）。
+    pub url: &'static str,
+    /// 归档内模型文件成员路径。
+    pub model_file: &'static str,
+    /// 归档内词表文件成员路径。
+    pub tokens_file: &'static str,
+}
+
+/// sherpa-onnx Paraformer 中文模型（2023-03-28 发布，FunASR 训练）。
+const PARAFORMER_ZH_URL: &str =
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2023-03-28.tar.bz2";
+
+/// 内置模型清单（同一份归档按量化档位拆分为两个条目，各自只解包所需文件）。
+pub const MODELS: &[ModelMeta] = &[
+    ModelMeta {
+        id: "paraformer-zh-int8",
+        name: "Paraformer 中文",
+        languages: "中文（普通话）",
+        tier: ModelTier::Speed,
+        size_bytes: 223_385_835,
+        sha256: "9ada9127ca5b82320385ac12340eb8b05dee64fd45cf8cf593ec693826ec2fd7",
+        url: PARAFORMER_ZH_URL,
+        model_file: "sherpa-onnx-paraformer-zh-2023-03-28/model.int8.onnx",
+        tokens_file: "sherpa-onnx-paraformer-zh-2023-03-28/tokens.txt",
+    },
+    ModelMeta {
+        id: "paraformer-zh",
+        name: "Paraformer 中文",
+        languages: "中文（普通话）",
+        tier: ModelTier::Accuracy,
+        size_bytes: 863_821_140,
+        sha256: "3883fdb54abe1ab077997c8e14cf0532fc2498f8fb5eb118cd53d4ba05e4d169",
+        url: PARAFORMER_ZH_URL,
+        model_file: "sherpa-onnx-paraformer-zh-2023-03-28/model.onnx",
+        tokens_file: "sherpa-onnx-paraformer-zh-2023-03-28/tokens.txt",
+    },
+];
+
+/// 按 ID 查模型元数据。
+pub fn model_meta(id: &str) -> Option<&'static ModelMeta> {
+    MODELS.iter().find(|meta| meta.id == id)
+}
+
+/// 模型运行目录（数据目录 `models/` 下，NFR-P-09 不进安装包）。
+pub fn model_dir(models_dir: &Path, id: &str) -> PathBuf {
+    models_dir.join(id)
+}
+
+/// 模型在运行目录内的规范文件名（下载解包时统一改名）。
+const MODEL_ONNX_NAME: &str = "model.onnx";
+const TOKENS_NAME: &str = "tokens.txt";
+
+/// 模型文件完整性校验：计算 SHA-256 并与元数据比对（损坏返回 E-ASR-003）。
+pub fn verify_model_hash(model_path: &Path, meta: &ModelMeta) -> Result<(), AppError> {
+    let bytes = std::fs::read(model_path)
+        .map_err(|err| AppError::Asr(ERR_LOAD_FAILED, format!("读取模型文件失败: {err}")))?;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(&bytes);
+    let actual = hex_lower(&hasher.finalize());
+    if actual != meta.sha256 {
+        return Err(AppError::Asr(
+            ERR_HASH_MISMATCH,
+            "模型文件校验失败，请删除后重新下载".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// 字节切片转小写十六进制（避免额外依赖）。
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+/// 线性插值重采样到引擎采样率（16 kHz）。
+///
+/// AudioService 交付的是设备实际采样率（如 48 kHz），sherpa-rs 的 Paraformer
+/// 特征配置固定 16 kHz，推理前必须重采样。
+pub fn resample_to_engine(samples: &[f32], from_rate: u32) -> Vec<f32> {
+    if from_rate == ENGINE_SAMPLE_RATE || samples.is_empty() {
+        return samples.to_vec();
+    }
+    let out_len =
+        (samples.len() as u64 * u64::from(ENGINE_SAMPLE_RATE) / u64::from(from_rate)) as usize;
+    let mut out = Vec::with_capacity(out_len.max(1));
+    let step = f64::from(from_rate) / f64::from(ENGINE_SAMPLE_RATE);
+    for i in 0..out_len.max(1) {
+        let pos = i as f64 * step;
+        let idx = pos as usize;
+        let frac = (pos - idx as f64) as f32;
+        let a = samples.get(idx).copied().unwrap_or(0.0);
+        let b = samples.get(idx + 1).copied().unwrap_or(a);
+        out.push(a + (b - a) * frac);
+    }
+    out
+}
+
+/// 前端模型卡片状态（T-014 消费）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+    pub languages: String,
+    pub tier: ModelTier,
+    pub size_bytes: u64,
+    /// 已下载且哈希校验通过。
+    pub downloaded: bool,
+    /// 当前激活（下一次识别使用）。
+    pub active: bool,
+    /// 模型文件存在但校验失败（损坏，引导重新下载）。
+    pub invalid: bool,
+    /// 下载中进度（非下载中为 None）。
+    pub progress: Option<DownloadProgress>,
+}
+
+/// 下载进度快照。
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct DownloadProgress {
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+}
+
+/// 推理引擎句柄：sherpa-rs Paraformer（`transcribe` 为 &mut self，经 Mutex 串行化；
+/// 同一时间只有一个录音会话，互斥不影响并发）。
+type Engine = Arc<std::sync::Mutex<sherpa_rs::paraformer::ParaformerRecognizer>>;
+
+/// 取引擎锁： poisoning 时恢复数据（识别引擎无内存态一致性要求）。
+fn lock_engine(
+    engine: &Engine,
+) -> std::sync::MutexGuard<'_, sherpa_rs::paraformer::ParaformerRecognizer> {
+    engine
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// AsrService：模型生命周期管理 + 推理消费 AudioReady。
+pub struct AsrService {
+    models_dir: PathBuf,
+    config: ConfigStore,
+    events: broadcast::Sender<AppEvent>,
+    /// 已加载引擎（Mutex 串行化加载与推理；同一时间只有一个录音会话）。
+    engine: Arc<Mutex<Option<(String, Engine)>>>,
+    /// 已下载且校验通过的模型缓存（避免每次全量哈希）。
+    verified: Arc<RwLock<HashSet<String>>>,
+    /// 进行中的下载任务（model_id → AbortHandle）。
+    downloads: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+    /// 下载进度快照（model_id → 进度）。
+    download_progress: Arc<RwLock<HashMap<String, DownloadProgress>>>,
+    /// 引擎加载互斥：切换 / 删除与推理串行。
+    lifecycle: Arc<Mutex<()>>,
+}
+
+impl AsrService {
+    pub fn new(
+        models_dir: PathBuf,
+        config: ConfigStore,
+        events: broadcast::Sender<AppEvent>,
+    ) -> Self {
+        Self {
+            models_dir,
+            config,
+            events,
+            engine: Arc::new(Mutex::new(None)),
+            verified: Arc::new(RwLock::new(HashSet::new())),
+            downloads: Arc::new(Mutex::new(HashMap::new())),
+            download_progress: Arc::new(RwLock::new(HashMap::new())),
+            lifecycle: Arc::new(Mutex::new(())),
+        }
+    }
+
+    /// 启动推理循环：消费 `AudioReady`，产出 `Recognized`（T-011 管线消费）。
+    pub fn start(self: Arc<Self>, mut events_rx: broadcast::Receiver<AppEvent>) {
+        tokio::spawn(async move {
+            loop {
+                match events_rx.recv().await {
+                    Ok(AppEvent::AudioReady {
+                        session_id,
+                        sample_rate,
+                        samples,
+                    }) => {
+                        self.handle_audio(session_id, sample_rate, samples).await;
+                    }
+                    Ok(AppEvent::ConfigChanged {
+                        section: ConfigSection::Asr,
+                    }) => {
+                        // 激活模型变更：卸载引擎，下一次录音时按需重载（即时生效）。
+                        let mut engine = self.engine.lock().await;
+                        if engine.is_some() {
+                            info!("激活模型已变更，卸载引擎待重载");
+                            *engine = None;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    /// 模型文件是否齐全（不保证完好：完好性以哈希校验为准）。
+    fn files_present(&self, meta: &ModelMeta) -> bool {
+        let dir = model_dir(&self.models_dir, meta.id);
+        dir.join(MODEL_ONNX_NAME).exists() && dir.join(TOKENS_NAME).exists()
+    }
+
+    /// 懒校验：文件齐全但未入 `verified` 缓存的模型，逐个哈希校验并更新缓存。
+    ///
+    /// 应用重启后 `verified` 为空，此处把磁盘上的已下载模型重新认证为可用，
+    /// 损坏文件保持未认证（`list_models` 标记 invalid，加载路径拒绝使用）。
+    async fn verify_present_models(&self) {
+        let pending: Vec<ModelMeta> = {
+            let verified = self.verified.read().await;
+            MODELS
+                .iter()
+                .filter(|meta| !verified.contains(meta.id) && self.files_present(meta))
+                .copied()
+                .collect()
+        };
+        for meta in pending {
+            let model_path = model_dir(&self.models_dir, meta.id).join(MODEL_ONNX_NAME);
+            let ok =
+                tokio::task::spawn_blocking(move || verify_model_hash(&model_path, &meta).is_ok())
+                    .await
+                    .unwrap_or(false);
+            let mut verified = self.verified.write().await;
+            if ok {
+                verified.insert(meta.id.to_string());
+            } else {
+                verified.remove(meta.id);
+                warn!(model = %meta.id, "模型文件校验失败，标记为损坏");
+            }
+        }
+    }
+
+    /// 模型清单（含下载 / 激活 / 损坏状态），T-014 模型管理页数据源。
+    pub async fn list_models(&self) -> Vec<ModelInfo> {
+        self.verify_present_models().await;
+        let verified = self.verified.read().await;
+        let progress = self.download_progress.read().await;
+        // active 只认哈希校验通过的模型（损坏模型显示 invalid，不显示为使用中）。
+        let active = self.config.get().await.asr.current_model_id;
+        let active = active.filter(|id| verified.contains(id)).or_else(|| {
+            MODELS
+                .iter()
+                .map(|meta| meta.id)
+                .find(|id| verified.contains(*id))
+                .map(str::to_string)
+        });
+        MODELS
+            .iter()
+            .map(|meta| {
+                let files_present = self.files_present(meta);
+                let is_verified = verified.contains(meta.id);
+                let invalid = files_present && !is_verified;
+                ModelInfo {
+                    id: meta.id.to_string(),
+                    name: meta.name.to_string(),
+                    languages: meta.languages.to_string(),
+                    tier: meta.tier,
+                    size_bytes: meta.size_bytes,
+                    downloaded: is_verified,
+                    active: active.as_deref() == Some(meta.id),
+                    invalid,
+                    progress: progress.get(meta.id).copied(),
+                }
+            })
+            .collect()
+    }
+
+    /// 已验证或文件齐全（候选模型；加载路径仍会做一次哈希校验把关）。
+    async fn is_usable_candidate(&self, id: &str) -> bool {
+        if self.verified.read().await.contains(id) {
+            return true;
+        }
+        model_meta(id)
+            .map(|meta| self.files_present(meta))
+            .unwrap_or(false)
+    }
+
+    /// 解析当前应使用的模型：配置指定优先，否则首个已验证 / 文件齐全模型。
+    async fn resolve_active_model(&self) -> Option<String> {
+        let config_id = self.config.get().await.asr.current_model_id;
+        if let Some(id) = config_id {
+            if self.is_usable_candidate(&id).await {
+                return Some(id);
+            }
+        }
+        for meta in MODELS {
+            if self.is_usable_candidate(meta.id).await {
+                return Some(meta.id.to_string());
+            }
+        }
+        None
+    }
+
+    /// 下载模型：流式下载归档并解包所需成员，完成校验后自动激活（当前无可用模型时）。
+    pub async fn download_model(&self, model_id: String) -> Result<(), AppError> {
+        let meta = *model_meta(&model_id)
+            .ok_or_else(|| AppError::Asr(ERR_UNKNOWN_MODEL, format!("未知模型: {model_id}")))?;
+        {
+            let mut downloads = self.downloads.lock().await;
+            if downloads.contains_key(&model_id) {
+                return Ok(()); // 已在下载中，幂等
+            }
+            let handle = tokio::spawn({
+                let service = self.clone_handle();
+                async move {
+                    if let Err(err) = service.run_download(meta).await {
+                        warn!(code = %err.code(), "模型下载失败");
+                    }
+                }
+            });
+            downloads.insert(model_id, handle.abort_handle());
+        }
+        Ok(())
+    }
+
+    fn clone_handle(&self) -> Arc<Self> {
+        Arc::new(Self {
+            models_dir: self.models_dir.clone(),
+            config: self.config.clone(),
+            events: self.events.clone(),
+            engine: self.engine.clone(),
+            verified: self.verified.clone(),
+            downloads: self.downloads.clone(),
+            download_progress: self.download_progress.clone(),
+            lifecycle: self.lifecycle.clone(),
+        })
+    }
+
+    /// 取消进行中的下载。
+    pub async fn cancel_download(&self, model_id: String) -> Result<(), AppError> {
+        let handle = self.downloads.lock().await.remove(&model_id);
+        if let Some(handle) = handle {
+            handle.abort();
+            self.download_progress.write().await.remove(&model_id);
+            let _ = self.events.send(AppEvent::ModelDownloadProgress {
+                model_id,
+                status: DownloadStatus::Cancelled,
+                downloaded_bytes: 0,
+                total_bytes: 0,
+            });
+        }
+        Ok(())
+    }
+
+    /// 删除模型：使用中（激活）模型允许删除但回退到首个可用模型并提示（T-014）；
+    /// 删除后识别走回退模型，无可用模型时下次录音给出引导（E-ASR-001）。
+    pub async fn delete_model(&self, model_id: String) -> Result<(), AppError> {
+        let meta = model_meta(&model_id)
+            .ok_or_else(|| AppError::Asr(ERR_UNKNOWN_MODEL, format!("未知模型: {model_id}")))?;
+        self.cancel_download(model_id.clone()).await.ok();
+        let _guard = self.lifecycle.lock().await;
+
+        let was_active = self.resolve_active_model().await.as_deref() == Some(meta.id);
+        let dir = model_dir(&self.models_dir, &model_id);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .map_err(|err| AppError::Asr(ERR_LOAD_FAILED, format!("删除模型失败: {err}")))?;
+        }
+        self.verified.write().await.remove(&model_id);
+
+        // 删除激活模型：卸载引擎并回退到首个可用模型（有则立即重载生效）。
+        let mut fallback: Option<String> = None;
+        if was_active {
+            let mut engine = self.engine.lock().await;
+            *engine = None;
+            drop(engine);
+            for other in MODELS {
+                if other.id != meta.id && self.is_usable_candidate(other.id).await {
+                    fallback = Some(other.id.to_string());
+                    break;
+                }
+            }
+            if let Some(fallback_id) = &fallback {
+                info!(fallback = %fallback_id, "已删除激活模型，回退到首个可用模型");
+            }
+        }
+        // 配置中的 current_model_id 若指向已删模型，清掉走自动回退。
+        let mut asr_config = self.config.get().await.asr;
+        if asr_config.current_model_id.as_deref() == Some(meta.id) {
+            asr_config.current_model_id = None;
+            let value = serde_json::to_value(&asr_config)
+                .map_err(|err| AppError::Config(4, format!("配置序列化失败: {err}")))?;
+            self.config.set_section(ConfigSection::Asr, value).await?;
+        }
+        let _ = self.events.send(AppEvent::AsrNotice {
+            code: "E-ASR-000".to_string(),
+            message: match &fallback {
+                Some(id) => format!(
+                    "已删除模型，识别将使用 {}",
+                    model_meta(id).map(|m| m.name).unwrap_or(id)
+                ),
+                None => "已删除模型，当前没有可用模型，请下载模型后再使用语音输入".to_string(),
+            },
+        });
+        Ok(())
+    }
+
+    /// 切换激活模型：校验已下载后立即重载引擎（下一次录音用新模型，T-014 验收）。
+    pub async fn set_active_model(&self, model_id: String) -> Result<(), AppError> {
+        let meta = model_meta(&model_id)
+            .ok_or_else(|| AppError::Asr(ERR_UNKNOWN_MODEL, format!("未知模型: {model_id}")))?;
+        if !self.is_usable_candidate(meta.id).await {
+            return Err(AppError::Asr(
+                ERR_MODEL_MISSING,
+                "模型尚未下载，请先下载后再切换".to_string(),
+            ));
+        }
+        let mut asr_config = self.config.get().await.asr;
+        asr_config.current_model_id = Some(model_id);
+        let value = serde_json::to_value(&asr_config)
+            .map_err(|err| AppError::Config(4, format!("配置序列化失败: {err}")))?;
+        self.config.set_section(ConfigSection::Asr, value).await?;
+        // ConfigChanged(Asr) 事件会卸载引擎；此处主动重载使切换即时生效。
+        self.reload_engine().await?;
+        Ok(())
+    }
+
+    /// 重载引擎（按当前激活模型）。失败保留旧引擎不动作（由调用方决定提示）。
+    pub async fn reload_engine(&self) -> Result<(), AppError> {
+        let _guard = self.lifecycle.lock().await;
+        let model_id = self.resolve_active_model().await.ok_or_else(|| {
+            AppError::Asr(
+                ERR_MODEL_MISSING,
+                "没有可用的识别模型，请先下载模型".to_string(),
+            )
+        })?;
+        let meta = *model_meta(&model_id)
+            .ok_or_else(|| AppError::Asr(ERR_UNKNOWN_MODEL, format!("未知模型: {model_id}")))?;
+        let engine = self.load_engine(&meta).await?;
+        *self.engine.lock().await = Some((meta.id.to_string(), engine));
+        Ok(())
+    }
+
+    /// 加载引擎（spawn_blocking：模型加载为耗时阻塞操作，tech/04 4.4）。
+    async fn load_engine(&self, meta: &ModelMeta) -> Result<Engine, AppError> {
+        let meta = *meta;
+        let dir = model_dir(&self.models_dir, meta.id);
+        let model_path = dir.join(MODEL_ONNX_NAME);
+        let tokens_path = dir.join(TOKENS_NAME);
+        let engine = tokio::task::spawn_blocking(move || {
+            load_engine_blocking(&meta, &model_path, &tokens_path)
+        })
+        .await
+        .map_err(|err| AppError::Asr(ERR_LOAD_FAILED, format!("模型加载任务失败: {err}")))??;
+        self.verified.write().await.insert(meta.id.to_string());
+        Ok(engine)
+    }
+
+    /// 录音音频就绪：确保引擎已加载（懒加载），随后推理。
+    async fn handle_audio(&self, session_id: u64, sample_rate: u32, samples: Arc<Vec<f32>>) {
+        // 懒加载：引擎缺失时按当前激活模型加载（首次使用 / 切换后）。
+        {
+            let engine = self.engine.lock().await;
+            if engine.is_none() {
+                drop(engine);
+                if let Err(err) = self.reload_engine().await {
+                    warn!(code = %err.code(), "识别引擎不可用");
+                    let _ =
+                        self.events
+                            .send(AppEvent::RecordingResult(RecordingResultEvent::Failed {
+                                code: err.code(),
+                                message: err.message().to_string(),
+                            }));
+                    return;
+                }
+            }
+        }
+
+        let engine_guard = self.engine.lock().await;
+        let Some((model_id, engine)) = engine_guard.as_ref() else {
+            return; // 上面已报错，防御性返回
+        };
+        let engine = engine.clone();
+        let model_id = model_id.clone();
+        drop(engine_guard);
+
+        let events = self.events.clone();
+        tokio::task::spawn_blocking(move || {
+            let started = Instant::now();
+            let prepared = resample_to_engine(&samples, sample_rate);
+            let result = lock_engine(&engine).transcribe(ENGINE_SAMPLE_RATE, &prepared);
+            // NFR-P-03/04 埋点：日志只出现耗时与模型 ID，不出现识别文本（NFR-S-02）。
+            info!(
+                session_id,
+                model = %model_id,
+                samples = prepared.len(),
+                elapsed_ms = %started.elapsed().as_millis(),
+                "识别推理完成"
+            );
+            if result.text.trim().is_empty() {
+                let _ = events.send(AppEvent::RecordingResult(RecordingResultEvent::Failed {
+                    code: AppError::Asr(ERR_INFERENCE, String::new()).code(),
+                    message: "未能识别出有效内容，请靠近麦克风重试".to_string(),
+                }));
+                return;
+            }
+            // 识别文本 → 后处理管线（T-011 消费；上屏在 T-012 串联）。
+            let _ = events.send(AppEvent::Recognized {
+                session_id,
+                text: result.text,
+            });
+        });
+    }
+
+    /// 下载主体：流式下载 → 解包 → 校验 → 落盘 → 自动激活。
+    async fn run_download(&self, meta: ModelMeta) -> Result<(), AppError> {
+        let model_id = meta.id.to_string();
+        self.download_progress.write().await.insert(
+            model_id.clone(),
+            DownloadProgress {
+                downloaded_bytes: 0,
+                total_bytes: 0,
+            },
+        );
+        let result = self.download_inner(&meta).await;
+        self.downloads.lock().await.remove(&model_id);
+        match result {
+            Ok(()) => {
+                self.download_progress.write().await.remove(&model_id);
+                // 自动激活：当前没有任何可用模型时（含首启下载引导场景）。
+                let should_activate = {
+                    let verified = self.verified.read().await;
+                    MODELS
+                        .iter()
+                        .filter(|m| m.id != meta.id)
+                        .all(|m| !verified.contains(m.id))
+                };
+                if should_activate {
+                    info!(model = %meta.id, "首个模型下载完成，自动激活");
+                    let _ = self.reload_engine().await;
+                }
+                Ok(())
+            }
+            Err(err) => {
+                self.download_progress.write().await.remove(&model_id);
+                let _ = self.events.send(AppEvent::ModelDownloadProgress {
+                    model_id,
+                    status: DownloadStatus::Failed,
+                    downloaded_bytes: 0,
+                    total_bytes: meta.size_bytes,
+                });
+                Err(err)
+            }
+        }
+    }
+
+    async fn download_inner(&self, meta: &ModelMeta) -> Result<(), AppError> {
+        use futures_util::StreamExt;
+        let model_id = meta.id;
+        let _ = self.events.send(AppEvent::ModelDownloadProgress {
+            model_id: model_id.to_string(),
+            status: DownloadStatus::Downloading,
+            downloaded_bytes: 0,
+            total_bytes: 0,
+        });
+
+        let response = reqwest::get(meta.url)
+            .await
+            .map_err(|err| AppError::Asr(ERR_DOWNLOAD, format!("连接模型下载源失败: {err}")))?;
+        if !response.status().is_success() {
+            return Err(AppError::Asr(
+                ERR_DOWNLOAD,
+                format!("模型下载源返回错误: {}", response.status()),
+            ));
+        }
+        let total = response.content_length().unwrap_or(0);
+
+        // 第一步：流式落盘到临时归档文件（边下边广播进度，节流 250 ms）。
+        let archive_path = self.models_dir.join(format!(".{model_id}.tar.bz2"));
+        let mut file = std::fs::File::create(&archive_path)
+            .map_err(|err| AppError::Asr(ERR_DOWNLOAD, format!("创建下载文件失败: {err}")))?;
+        let mut stream = response.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last_emit = Instant::now() - PROGRESS_THROTTLE;
+        let write_result: Result<(), AppError> = loop {
+            match stream.next().await {
+                Some(Ok(chunk)) => {
+                    use std::io::Write;
+                    if let Err(err) = file.write_all(&chunk) {
+                        break Err(AppError::Asr(
+                            ERR_DOWNLOAD,
+                            format!("写入下载文件失败: {err}"),
+                        ));
+                    }
+                    downloaded += chunk.len() as u64;
+                    if last_emit.elapsed() >= PROGRESS_THROTTLE {
+                        last_emit = Instant::now();
+                        self.download_progress.write().await.insert(
+                            model_id.to_string(),
+                            DownloadProgress {
+                                downloaded_bytes: downloaded,
+                                total_bytes: total,
+                            },
+                        );
+                        let _ = self.events.send(AppEvent::ModelDownloadProgress {
+                            model_id: model_id.to_string(),
+                            status: DownloadStatus::Downloading,
+                            downloaded_bytes: downloaded,
+                            total_bytes: total,
+                        });
+                    }
+                }
+                Some(Err(err)) => {
+                    break Err(AppError::Asr(ERR_DOWNLOAD, format!("模型下载中断: {err}")));
+                }
+                None => break Ok(()),
+            }
+        };
+        if let Err(err) = write_result {
+            drop(file);
+            let _ = std::fs::remove_file(&archive_path);
+            return Err(err);
+        }
+        drop(file);
+
+        // 第二步：解包所需成员到临时目录，全部成功并校验通过后才原子切换。
+        let tmp_dir = self.models_dir.join(format!(".{model_id}.tmp"));
+        if tmp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+        std::fs::create_dir_all(&tmp_dir)
+            .map_err(|err| AppError::Asr(ERR_DOWNLOAD, format!("创建下载目录失败: {err}")))?;
+
+        let extract_result = (|| -> Result<(), AppError> {
+            let archive_file = std::fs::File::open(&archive_path)
+                .map_err(|err| AppError::Asr(ERR_DOWNLOAD, format!("读取下载文件失败: {err}")))?;
+            let decoder = bzip2::read::BzDecoder::new(std::io::BufReader::new(archive_file));
+            let mut archive = tar::Archive::new(decoder);
+            let entries = archive
+                .entries()
+                .map_err(|err| AppError::Asr(ERR_DOWNLOAD, format!("读取模型归档失败: {err}")))?;
+            for entry in entries {
+                let mut entry = entry
+                    .map_err(|err| AppError::Asr(ERR_DOWNLOAD, format!("解包模型失败: {err}")))?;
+                let path = entry
+                    .path()
+                    .map_err(|err| AppError::Asr(ERR_DOWNLOAD, format!("解包模型失败: {err}")))?;
+                let name = path.to_string_lossy();
+                let target = if name == meta.model_file {
+                    Some(MODEL_ONNX_NAME)
+                } else if name == meta.tokens_file {
+                    Some(TOKENS_NAME)
+                } else {
+                    None
+                };
+                if let Some(target) = target {
+                    entry.unpack(tmp_dir.join(target)).map_err(|err| {
+                        AppError::Asr(ERR_DOWNLOAD, format!("写入模型文件失败: {err}"))
+                    })?;
+                }
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_file(&archive_path);
+
+        if let Err(err) = extract_result {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(err);
+        }
+        // 归档不完整（下载中断 / 成员缺失）双重检查。
+        if !tmp_dir.join(MODEL_ONNX_NAME).exists() || !tmp_dir.join(TOKENS_NAME).exists() {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(AppError::Asr(
+                ERR_DOWNLOAD,
+                "模型归档不完整，下载已中断".to_string(),
+            ));
+        }
+
+        // 哈希校验：损坏拒绝加载并清理，引导重新下载（T-006 验收）。
+        verify_model_hash(&tmp_dir.join(MODEL_ONNX_NAME), meta).inspect_err(|_| {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        })?;
+
+        let final_dir = model_dir(&self.models_dir, model_id);
+        if final_dir.exists() {
+            let _ = std::fs::remove_dir_all(&final_dir);
+        }
+        std::fs::rename(&tmp_dir, &final_dir)
+            .map_err(|err| AppError::Asr(ERR_DOWNLOAD, format!("安装模型失败: {err}")))?;
+        self.verified.write().await.insert(model_id.to_string());
+        info!(model = %model_id, "模型下载并校验完成");
+        let _ = self.events.send(AppEvent::ModelDownloadProgress {
+            model_id: model_id.to_string(),
+            status: DownloadStatus::Completed,
+            downloaded_bytes: meta.size_bytes,
+            total_bytes: meta.size_bytes,
+        });
+        Ok(())
+    }
+
+    /// 识别指定 16 kHz WAV 文件（T-006 本地验证命令；也供 T-011 验收驱动）。
+    ///
+    /// 识别文本经返回值交付调用方，绝不写入日志（NFR-S-02）。
+    pub async fn recognize_wav(&self, wav_path: String) -> Result<String, AppError> {
+        let (samples, sample_rate) = tokio::task::spawn_blocking(move || {
+            sherpa_rs::read_audio_file(&wav_path)
+                .map_err(|err| AppError::Asr(ERR_INFERENCE, format!("读取 WAV 失败: {err}")))
+        })
+        .await
+        .map_err(|err| AppError::Asr(ERR_INFERENCE, format!("读取任务失败: {err}")))??;
+
+        {
+            let engine = self.engine.lock().await;
+            if engine.is_none() {
+                drop(engine);
+                self.reload_engine().await?;
+            }
+        }
+        let engine_guard = self.engine.lock().await;
+        let Some((_, engine)) = engine_guard.as_ref() else {
+            return Err(AppError::Asr(ERR_LOAD_FAILED, "识别引擎不可用".to_string()));
+        };
+        let engine = engine.clone();
+        drop(engine_guard);
+        let prepared = resample_to_engine(&samples, sample_rate);
+        let result = tokio::task::spawn_blocking(move || {
+            lock_engine(&engine).transcribe(ENGINE_SAMPLE_RATE, &prepared)
+        })
+        .await
+        .map_err(|err| AppError::Asr(ERR_INFERENCE, format!("推理任务失败: {err}")))?;
+        Ok(result.text)
+    }
+}
+
+/// 阻塞加载引擎：哈希校验（未缓存时）+ 构造 ParaformerRecognizer。
+fn load_engine_blocking(
+    meta: &ModelMeta,
+    model_path: &Path,
+    tokens_path: &Path,
+) -> Result<Engine, AppError> {
+    if !model_path.exists() || !tokens_path.exists() {
+        return Err(AppError::Asr(
+            ERR_MODEL_MISSING,
+            "模型文件缺失，请先下载模型".to_string(),
+        ));
+    }
+    // 每次加载都校验哈希：文件可能在下载后被外部破坏（T-006 验收）。
+    verify_model_hash(model_path, meta)?;
+    let started = Instant::now();
+    let engine =
+        sherpa_rs::paraformer::ParaformerRecognizer::new(sherpa_rs::paraformer::ParaformerConfig {
+            model: model_path.to_string_lossy().into_owned(),
+            tokens: tokens_path.to_string_lossy().into_owned(),
+            provider: None,
+            num_threads: Some(2),
+            debug: false,
+        })
+        .map_err(|err| AppError::Asr(ERR_LOAD_FAILED, format!("模型加载失败: {err}")))?;
+    info!(
+        model = %meta.id,
+        elapsed_ms = %started.elapsed().as_millis(),
+        "识别引擎加载完成"
+    );
+    Ok(Arc::new(std::sync::Mutex::new(engine)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_registry_is_consistent() {
+        // id 唯一。
+        let mut ids = MODELS.iter().map(|m| m.id).collect::<Vec<_>>();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), MODELS.len());
+        for meta in MODELS {
+            assert!(meta.size_bytes > 0);
+            assert_eq!(meta.sha256.len(), 64);
+            assert!(meta.url.starts_with("https://"));
+            assert!(meta.model_file.ends_with(".onnx"));
+            assert!(meta.tokens_file.ends_with("tokens.txt"));
+        }
+        // 同档位不重名冲突：两个条目共享展示名但档位不同。
+        assert_ne!(MODELS[0].tier, MODELS[1].tier);
+    }
+
+    #[test]
+    fn model_meta_lookup_by_id() {
+        assert!(model_meta("paraformer-zh-int8").is_some());
+        assert!(model_meta("paraformer-zh").is_some());
+        assert!(model_meta("nope").is_none());
+    }
+
+    #[test]
+    fn hex_lower_formats_bytes() {
+        assert_eq!(hex_lower(&[0x00, 0xff, 0x1a]), "00ff1a");
+    }
+
+    #[test]
+    fn resample_identity_and_ratio() {
+        // 已是 16 kHz：原样返回。
+        let samples = vec![0.1f32; 160];
+        assert_eq!(resample_to_engine(&samples, 16_000), samples);
+        // 48 kHz → 16 kHz：长度约 1/3。
+        let long = vec![0.2f32; 4800];
+        let out = resample_to_engine(&long, 48_000);
+        assert!((out.len() as i64 - 1600).abs() <= 1);
+        // 空输入不 panic。
+        assert!(resample_to_engine(&[], 48_000).is_empty());
+    }
+
+    #[test]
+    fn resample_preserves_signal_shape() {
+        // 常量信号重采样后仍近似常量（线性插值保直流分量）。
+        let samples = vec![0.5f32; 3200];
+        let out = resample_to_engine(&samples, 32_000);
+        assert!(out.iter().all(|s| (s - 0.5).abs() < 1e-6));
+    }
+
+    #[tokio::test]
+    async fn hash_mismatch_rejected() {
+        // 构造一个假模型文件：哈希必须失败（E-ASR-003）。
+        let dir = std::env::temp_dir().join(format!("vt-asr-hash-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("model.onnx");
+        std::fs::write(&fake, b"not a real model").unwrap();
+        let meta = model_meta("paraformer-zh-int8").unwrap();
+        let err = verify_model_hash(&fake, meta).unwrap_err();
+        assert_eq!(err.code(), "E-ASR-003");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn list_models_marks_missing_and_active() {
+        let dir = std::env::temp_dir().join(format!("vt-asr-list-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (events_tx, _rx) = crate::events::channel();
+        let config = ConfigStore::load(&dir, events_tx).unwrap();
+        let models_dir = dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        let service = AsrService::new(models_dir, config, crate::events::channel().0);
+        let models = service.list_models().await;
+        assert_eq!(models.len(), MODELS.len());
+        // 未下载：全部 not downloaded，无激活。
+        assert!(models
+            .iter()
+            .all(|m| !m.downloaded && !m.active && !m.invalid));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn present_but_corrupt_model_marked_invalid() {
+        // 文件齐全但哈希不符（如重启后缓存清空 / 文件被外部破坏）：
+        // list_models 懒校验后标记 invalid，且不列为可用候选。
+        let dir = std::env::temp_dir().join(format!("vt-asr-corrupt-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (events_tx, _rx) = crate::events::channel();
+        let config = ConfigStore::load(&dir, events_tx).unwrap();
+        let models_dir = dir.join("models");
+        let model_dir = model_dir(&models_dir, "paraformer-zh-int8");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("model.onnx"), b"corrupted").unwrap();
+        std::fs::write(model_dir.join("tokens.txt"), "a 1\n").unwrap();
+        let service = AsrService::new(models_dir, config, crate::events::channel().0);
+        let models = service.list_models().await;
+        let int8 = models
+            .iter()
+            .find(|m| m.id == "paraformer-zh-int8")
+            .unwrap();
+        assert!(int8.invalid, "哈希不符应标记 invalid");
+        assert!(!int8.downloaded);
+        assert!(!int8.active);
+        // 加载路径把关：损坏模型拒绝加载（E-ASR-003），不静默使用。
+        let err = service.reload_engine().await.unwrap_err();
+        assert_eq!(err.code(), "E-ASR-003");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn delete_unknown_model_rejected() {
+        let dir = std::env::temp_dir().join(format!("vt-asr-del-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let service = AsrService::new(
+            dir.join("models"),
+            ConfigStore::load(&dir, crate::events::channel().0).unwrap(),
+            crate::events::channel().0,
+        );
+        let err = service.delete_model("nope".to_string()).await.unwrap_err();
+        assert_eq!(err.code(), "E-ASR-007");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

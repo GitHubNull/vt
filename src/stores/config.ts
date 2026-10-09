@@ -52,6 +52,7 @@ export function defaultConfig(): AppConfig {
       keep_text_in_clipboard: false,
     },
     dict: { enabled: true },
+    asr: { current_model_id: null },
     about: { auto_check_update: true },
   }
 }

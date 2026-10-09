@@ -34,8 +34,8 @@ pub struct MockTextInjector {
     pub focused_app: Mutex<Option<String>>,
 }
 
-impl MockTextInjector {
-    pub fn new() -> Self {
+impl Default for MockTextInjector {
+    fn default() -> Self {
         Self {
             typed: Mutex::new(Vec::new()),
             backups: Mutex::new(Vec::new()),
@@ -50,6 +50,12 @@ impl MockTextInjector {
             focus: Mutex::new(FocusState::Focused),
             focused_app: Mutex::new(None),
         }
+    }
+}
+
+impl MockTextInjector {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// 设置焦点状态（`Arc` 共享下可调用）。

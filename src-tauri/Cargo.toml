@@ -22,8 +22,16 @@ enigo = "0.6"
 tauri-plugin-clipboard-manager = "2"
 # 系统通知（F-INPUT-09 无焦点兜底提示；T-007 登记）
 tauri-plugin-notification = "2"
-# HTTP 客户端（tech/02 2.3 权威清单：reqwest + rustls；T-016 更新检查使用）
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# HTTP 客户端（tech/02 2.3 权威清单：reqwest + rustls；T-016 更新检查、T-006 模型下载使用）
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+# 本地离线 ASR（tech/02 2.3；T-006 登记：sherpa-rs 绑定 sherpa-onnx，静态编译 onnxruntime，
+# 纯本地推理断网可用；首次编译联编 onnxruntime 约 15~30 分钟属正常）
+sherpa-rs = { version = "0.6", default-features = false, features = ["static"] }
+# 模型文件 SHA-256 校验（T-006；sherpa-rs-sys 构建期也用，应用侧独立登记）
+sha2 = "0.10"
+# 模型归档解包（T-006 下载后从 tar.bz2 提取模型文件）
+tar = "0.4"
+bzip2 = "0.4"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

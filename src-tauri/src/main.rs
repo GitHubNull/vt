@@ -1,22 +1,17 @@
 //! VibeType 桌面端入口（tech/04 4.1）：初始化日志、Tauri Builder、插件与命令注册。
 //!
+//! 模块实现在库目标（lib.rs），集成测试经库目标复用服务层。
+//!
 //! 最小权限说明（AGENTS.md 3.5）：本进程仅访问麦克风（T-005）、全局快捷键（T-004）、
 //! 剪贴板与文本注入（T-007）等系统能力；配置与日志只写入平台标准目录（tech/08 8.1）。
 
-mod commands;
-mod error;
-mod events;
-mod platform;
-mod services;
-mod state;
-mod tray;
-mod windows;
-
-use state::AppState;
 use tauri::{Emitter, Manager};
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+use vibetype::services;
+use vibetype::state::AppState;
+use vibetype::{commands, events, platform, tray};
 
 fn main() {
     // NFR-P-08 冷启动埋点起点：进程启动到托盘可见的耗时。
@@ -58,6 +53,19 @@ fn main() {
             commands::about::apply_update,
             commands::about::export_logs,
             commands::about::get_legal_text,
+            // T-006 模型管理。
+            commands::asr::list_models,
+            commands::asr::download_model,
+            commands::asr::cancel_download,
+            commands::asr::delete_model,
+            commands::asr::set_active_model,
+            commands::asr::asr_recognize_wav,
+            // T-011 替换词典。
+            commands::dict::dict_list_rules,
+            commands::dict::dict_add_rule,
+            commands::dict::dict_update_rule,
+            commands::dict::dict_delete_rule,
+            commands::dict::dict_toggle_rule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running vibetype application");
@@ -149,6 +157,29 @@ async fn init_services(
     let notifier = platform::notify::TauriNotifier::new(app.handle().clone());
     let inject_service = services::inject::InjectService::new(injector, notifier, config.clone());
 
+    // T-006 本地 ASR：模型目录在数据目录 models/（NFR-P-09 不进安装包）。
+    let models_dir = data_dir.join("models");
+    std::fs::create_dir_all(&models_dir)?;
+    let asr = std::sync::Arc::new(services::asr::AsrService::new(
+        models_dir,
+        config.clone(),
+        event_tx.clone(),
+    ));
+    asr.clone().start(event_tx.subscribe());
+
+    // T-011 替换词典 + 后处理管线：词典文件 dict/replace.json（数据目录）。
+    let dict = services::dict::DictService::load(&data_dir, event_tx.clone())?;
+    if dict.take_recovered().await {
+        // 词典损坏回退空词典：提示但不阻塞启动（NFR-S-07 雏形）。
+        let _ = event_tx.send(events::AppEvent::AsrNotice {
+            code: "E-CONFIG-002".to_string(),
+            message: "替换词典文件损坏，已回退为空词典，请重新添加规则".to_string(),
+        });
+    }
+    let post_process =
+        services::post_process::PostProcess::new(dict.clone(), config.clone(), event_tx.clone());
+    post_process.clone().start(event_tx.subscribe());
+
     // T-015 系统托盘：双态图标 + 菜单 + 左键唤起小窗 + 录音状态联动。
     tray::setup_tray(app, event_tx.subscribe(), process_start)?;
 
@@ -157,6 +188,9 @@ async fn init_services(
         record_tx,
         audio_backend,
         inject_service,
+        asr,
+        dict,
+        post_process,
     ))
 }
 

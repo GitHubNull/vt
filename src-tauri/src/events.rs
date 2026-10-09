@@ -41,8 +41,6 @@ pub enum RecordingState {
 }
 
 /// 模型下载状态。
-// 允许 dead_code：由 T-014 模型管理构造。
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DownloadStatus {
@@ -53,13 +51,11 @@ pub enum DownloadStatus {
 }
 
 /// 录音结果事件载荷（tech/05 5.5）。
-// 允许 dead_code：由 T-005 / T-012 构造。
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RecordingResultEvent {
-    /// 识别并上屏成功。
-    Ok,
+    /// 识别完成（管线出口，`text` 为后处理后的最终文本；上屏在 T-012 串联）。
+    Ok { text: String },
     /// 降级完成（如走剪贴板兜底），`reason` 说明降级路径。
     Degraded { reason: String },
     /// 失败，`code` 为稳定错误编号（如 `E-AUDIO-001`）。
@@ -67,8 +63,6 @@ pub enum RecordingResultEvent {
 }
 
 /// 应用事件：服务间广播 + 前端推送的统一载荷。
-// 允许 dead_code：全部变体由 T-004 ~ T-016 各服务构造，本任务（T-003）先建通道。
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppEvent {
@@ -91,6 +85,11 @@ pub enum AppEvent {
         sample_rate: u32,
         samples: std::sync::Arc<Vec<f32>>,
     },
+    /// 识别完成（内部事件，仅后处理管线消费，不转发前端；T-011 接入）。
+    /// 隐私（NFR-S-02）：识别文本只经事件通道传递，绝不写入日志。
+    Recognized { session_id: u64, text: String },
+    /// 后处理管线出口（内部事件，T-012 上屏消费；T-011 起由管线广播）。
+    PipelineOutput { session_id: u64, text: String },
     /// 模型下载进度。
     ModelDownloadProgress {
         model_id: String,
@@ -98,6 +97,10 @@ pub enum AppEvent {
         downloaded_bytes: u64,
         total_bytes: u64,
     },
+    /// 模型管理提示（如删除激活模型后已回退到首个可用模型）。
+    AsrNotice { code: String, message: String },
+    /// 替换词典变更（多窗口同步，T-011）。
+    DictChanged,
     /// 快捷键注册失败等错误提示（携带稳定错误编号）。
     HotkeyError { code: String, message: String },
 }
@@ -112,7 +115,11 @@ impl AppEvent {
             Self::RecordingLevel { .. } => Some("recording:level"),
             Self::RecordingResult(_) => Some("recording:result"),
             Self::AudioReady { .. } => None,
+            Self::Recognized { .. } => None,
+            Self::PipelineOutput { .. } => None,
             Self::ModelDownloadProgress { .. } => Some("model:progress"),
+            Self::AsrNotice { .. } => Some("asr:notice"),
+            Self::DictChanged => Some("dict:changed"),
             Self::HotkeyError { .. } => Some("hotkey:error"),
         }
     }

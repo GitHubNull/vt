@@ -10,6 +10,8 @@ export const EVENTS = {
   configChanged: 'config:changed',
   configRecovered: 'config:recovered',
   modelProgress: 'model:progress',
+  asrNotice: 'asr:notice',
+  dictChanged: 'dict:changed',
   hotkeyError: 'hotkey:error',
 } as const
 

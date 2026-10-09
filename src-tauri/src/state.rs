@@ -5,9 +5,12 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::platform::audio::AudioBackend;
+use crate::services::asr::AsrService;
 use crate::services::config_store::ConfigStore;
+use crate::services::dict::DictService;
 use crate::services::hotkey::RecordCommand;
 use crate::services::inject::InjectService;
+use crate::services::post_process::PostProcess;
 
 /// 应用全局状态（各服务句柄聚合）。
 ///
@@ -21,6 +24,12 @@ pub struct AppState {
     pub audio_backend: Arc<dyn AudioBackend>,
     /// 文本上屏服务（T-007）：三级降级链（模拟键入 → 剪贴板粘贴 → 无焦点兜底）。
     pub inject_service: InjectService,
+    /// 识别引擎与模型管理（T-006）：加载 / 切换 / 下载 / 删除 / 推理。
+    pub asr: Arc<AsrService>,
+    /// 替换词典服务（T-011）：规则 CRUD / 启停 / 持久化。
+    pub dict: DictService,
+    /// 后处理管线（T-011）：识别文本 → 管线 → 出口事件。
+    pub post_process: Arc<PostProcess>,
 }
 
 impl AppState {
@@ -29,12 +38,18 @@ impl AppState {
         record_tx: mpsc::Sender<RecordCommand>,
         audio_backend: Arc<dyn AudioBackend>,
         inject_service: InjectService,
+        asr: Arc<AsrService>,
+        dict: DictService,
+        post_process: Arc<PostProcess>,
     ) -> Self {
         Self {
             config,
             record_tx,
             audio_backend,
             inject_service,
+            asr,
+            dict,
+            post_process,
         }
     }
 }

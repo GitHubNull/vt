@@ -32,6 +32,7 @@ pub enum ConfigSection {
     Audio,
     Output,
     Dict,
+    Asr,
     About,
 }
 
@@ -44,6 +45,7 @@ impl ConfigSection {
             "audio" => Some(Self::Audio),
             "output" => Some(Self::Output),
             "dict" => Some(Self::Dict),
+            "asr" => Some(Self::Asr),
             "about" => Some(Self::About),
             _ => None,
         }
@@ -216,6 +218,14 @@ impl Default for DictConfig {
     }
 }
 
+/// 识别引擎设置（F-SET-06 当前模型，T-006）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AsrConfig {
+    /// 当前激活模型 ID（`None` = 自动选择首个可用模型）。
+    pub current_model_id: Option<String>,
+}
+
 /// 关于页设置（F-ABOUT-01）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -250,6 +260,7 @@ pub struct AppConfig {
     pub audio: AudioConfig,
     pub output: OutputConfig,
     pub dict: DictConfig,
+    pub asr: AsrConfig,
     pub about: AboutConfig,
 }
 
@@ -382,6 +393,9 @@ impl ConfigStore {
             ConfigSection::Dict => {
                 config.dict = serde_json::from_value(value).map_err(apply_err)?;
             }
+            ConfigSection::Asr => {
+                config.asr = serde_json::from_value(value).map_err(apply_err)?;
+            }
             ConfigSection::About => {
                 config.about = serde_json::from_value(value).map_err(apply_err)?;
             }
@@ -393,31 +407,41 @@ impl ConfigStore {
     ///
     /// 调用者必须已持有写锁。
     async fn save_locked(&self, config: &AppConfig) -> Result<(), AppError> {
-        let content = serde_json::to_string_pretty(config)
-            .map_err(|err| AppError::Config(ERR_BAD_JSON, format!("配置序列化失败: {err}")))?;
-        let tmp_path = tmp_path(&self.path);
-        // 写入临时文件并 fsync，崩溃时最多残留 .tmp，不影响主文件读取（NFR-R-05）。
-        let mut file = fs::File::create(&tmp_path).map_err(io_err)?;
-        use std::io::Write;
-        file.write_all(content.as_bytes()).map_err(io_err)?;
-        file.sync_all().map_err(io_err)?;
-        drop(file);
-        // 原子 rename：任何时刻磁盘上不存在半写的 config.json。
-        fs::rename(&tmp_path, self.path.as_ref()).map_err(io_err)?;
+        write_json_atomic(&self.path, config)?;
         // 成功后留下本次良好副本 config.json.bak（与 config.json 不同 inode，
         // config.json 被外部写坏时可回退；tech/08 8.2 损坏回退）。
         let backup = backup_path_of(&self.path);
         if let Err(err) = fs::copy(self.path.as_ref(), &backup) {
             warn!(error = %err, "刷新配置 .bak 副本失败");
         }
-        // 同步父目录，保证 rename 落盘（极端掉电场景）。
-        if let Some(dir) = self.path.parent() {
-            if let Ok(dir_file) = fs::File::open(dir) {
-                let _ = dir_file.sync_all();
-            }
-        }
         Ok(())
     }
+}
+
+/// 原子 JSON 落盘（NFR-R-05）：序列化 → 写 `<path>.tmp` → fsync → rename → 同步父目录。
+///
+/// 复用方（如 T-011 词典持久化）仅需提供目标路径与可序列化值；
+/// 任何时刻磁盘上不存在半写状态，崩溃最多残留 `.tmp`。
+pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
+    let content = serde_json::to_string_pretty(value)
+        .map_err(|err| AppError::Config(ERR_BAD_JSON, format!("JSON 序列化失败: {err}")))?;
+    // 父目录可能尚不存在（如词典首写时的 dict/）：先创建再落盘。
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(io_err)?;
+    }
+    let tmp = tmp_path(path);
+    let mut file = fs::File::create(&tmp).map_err(io_err)?;
+    use std::io::Write;
+    file.write_all(content.as_bytes()).map_err(io_err)?;
+    file.sync_all().map_err(io_err)?;
+    drop(file);
+    fs::rename(&tmp, path).map_err(io_err)?;
+    if let Some(dir) = path.parent() {
+        if let Ok(dir_file) = fs::File::open(dir) {
+            let _ = dir_file.sync_all();
+        }
+    }
+    Ok(())
 }
 
 fn io_err(err: std::io::Error) -> AppError {
@@ -484,6 +508,7 @@ mod tests {
             ConfigSection::Audio => serde_json::to_value(&config.audio).unwrap(),
             ConfigSection::Output => serde_json::to_value(&config.output).unwrap(),
             ConfigSection::Dict => serde_json::to_value(&config.dict).unwrap(),
+            ConfigSection::Asr => serde_json::to_value(&config.asr).unwrap(),
             ConfigSection::About => serde_json::to_value(&config.about).unwrap(),
         }
     }

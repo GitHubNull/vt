@@ -20,15 +20,11 @@ export type FloatBallPositionOption = 'cursor' | 'bottom_center' | 'fixed'
 export interface GeneralConfig {
   language: LanguageOption
   theme: ThemeMode
-  /**
-   * 开机自启动（PRD 3.8.6，F-SET-05）。
-   * TODO(后端契约)：Rust GeneralConfig 尚未包含 launch_at_login 字段，需补充；
-   * 在补充前该设置重启后不保留（serde 忽略未知字段）。
-   */
+  /** 开机自启动（PRD 3.8.6，F-SET-05，默认关）。 */
   launch_at_login: boolean
-  /** 保存语音数据集（PRD 3.8.6，默认关，隐私优先）。TODO(后端契约)：待补充 save_voice_dataset。 */
+  /** 保存语音数据集（PRD 3.8.6，默认关，隐私优先）。 */
   save_voice_dataset: boolean
-  /** 诊断模式（debug 日志级别，T-013）。TODO(后端契约)：待补充 diagnostic_mode。 */
+  /** 诊断模式（debug 日志级别，T-013）。 */
   diagnostic_mode: boolean
 }
 
@@ -83,6 +79,12 @@ export interface DictConfig {
   enabled: boolean
 }
 
+/** 识别引擎设置（T-006，F-SET-06 当前模型）。 */
+export interface AsrConfig {
+  /** 当前激活模型 ID（null = 自动选择首个可用模型）。 */
+  current_model_id: string | null
+}
+
 /** 关于页设置（F-ABOUT-01）。 */
 export interface AboutConfig {
   /** 自动检查更新（默认开，NFR-PR-06）。 */
@@ -96,6 +98,7 @@ export interface AppConfig {
   audio: AudioConfig
   output: OutputConfig
   dict: DictConfig
+  asr: AsrConfig
   about: AboutConfig
 }
 
@@ -157,3 +160,67 @@ export interface HotkeyErrorPayload {
   code: string
   message: string
 }
+
+/* ---- 模型管理（T-006 命令契约，后端 services/asr.rs） ---- */
+
+export type ModelTier = 'accuracy' | 'speed'
+
+export type DownloadState = 'downloading' | 'completed' | 'failed' | 'cancelled'
+
+export interface DownloadProgress {
+  downloaded_bytes: number
+  total_bytes: number
+}
+
+/** list_models 返回元素（后端 ModelInfo 序列化形态）。 */
+export interface ModelInfo {
+  id: string
+  name: string
+  languages: string
+  tier: ModelTier
+  size_bytes: number
+  downloaded: boolean
+  active: boolean
+  /** 模型文件存在但哈希校验失败（损坏，引导重新下载）。 */
+  invalid: boolean
+  progress: DownloadProgress | null
+}
+
+/** model:progress 事件载荷：`{ type: "model_download_progress", model_id, status, ... }`。 */
+export interface ModelDownloadProgressPayload {
+  type: 'model_download_progress'
+  model_id: string
+  status: DownloadState
+  downloaded_bytes: number
+  total_bytes: number
+}
+
+/** asr:notice 事件载荷：`{ type: "asr_notice", code, message }`。 */
+export interface AsrNoticePayload {
+  type: 'asr_notice'
+  code: string
+  message: string
+}
+
+/* ---- 替换词典（T-011 命令契约，后端 services/dict.rs） ---- */
+
+/** 替换规则（后端 ReplaceRule 序列化形态）。 */
+export interface ReplaceRule {
+  id: number
+  /** 错误词（识别结果中期望被替换的文本）。 */
+  wrong: string
+  /** 正确词；空字符串表示删除该词。 */
+  right: string
+  enabled: boolean
+}
+
+/** dict:changed 事件载荷：`{ type: "dict_changed" }`。 */
+export interface DictChangedPayload {
+  type: 'dict_changed'
+}
+
+/** recording:result 事件载荷（tech/05 5.5，tag=status）。 */
+export type RecordingResultPayload =
+  | { status: 'ok'; text: string }
+  | { status: 'degraded'; reason: string }
+  | { status: 'failed'; code: string; message: string }

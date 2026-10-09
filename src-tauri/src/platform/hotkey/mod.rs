@@ -155,12 +155,18 @@ pub mod mock {
         pub fail_next: std::sync::atomic::AtomicBool,
     }
 
-    impl MockHotkeyBackend {
-        pub fn new() -> Self {
+    impl Default for MockHotkeyBackend {
+        fn default() -> Self {
             Self {
                 registered: Mutex::new(Vec::new()),
                 fail_next: std::sync::atomic::AtomicBool::new(false),
             }
+        }
+    }
+
+    impl MockHotkeyBackend {
+        pub fn new() -> Self {
+            Self::default()
         }
 
         /// 当前已注册的唯一快捷键（v0.1 只注册一个录音触发键）。
