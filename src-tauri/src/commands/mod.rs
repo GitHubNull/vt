@@ -8,3 +8,4 @@ pub mod config;
 pub mod hotkey;
 pub mod inject;
 pub mod system;
+pub mod window;

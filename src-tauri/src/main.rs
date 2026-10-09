@@ -9,6 +9,8 @@ mod events;
 mod platform;
 mod services;
 mod state;
+mod tray;
+mod windows;
 
 use state::AppState;
 use tauri::{Emitter, Manager};
@@ -17,6 +19,8 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
+    // NFR-P-08 冷启动埋点起点：进程启动到托盘可见的耗时。
+    let process_start = std::time::Instant::now();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -24,9 +28,19 @@ fn main() {
         // T-007：剪贴板（粘贴路径备份 / 写入 / 恢复）与系统通知（无焦点兜底）。
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
+        .on_window_event(|window, event| {
+            // 关闭设置窗 / 小窗 = 隐藏到托盘，不退出应用（PRD 3.15、T-009）。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let label = window.label();
+                if label == "main" || label == "mini" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .setup(move |app| {
             init_logging(app)?;
-            let state = tauri::async_runtime::block_on(init_services(app))?;
+            let state = tauri::async_runtime::block_on(init_services(app, process_start))?;
             app.manage(state);
             tracing::info!("VibeType 后端初始化完成");
             Ok(())
@@ -38,6 +52,7 @@ fn main() {
             commands::hotkey::trigger_test_hotkey,
             commands::audio::list_audio_devices,
             commands::inject::inject_text,
+            commands::window::show_mini_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running vibetype application");
@@ -64,7 +79,10 @@ fn init_logging(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// 初始化数据目录与核心服务（tech/08 8.1；T-003 / T-004）。
-async fn init_services(app: &mut tauri::App) -> Result<AppState, Box<dyn std::error::Error>> {
+async fn init_services(
+    app: &mut tauri::App,
+    process_start: std::time::Instant,
+) -> Result<AppState, Box<dyn std::error::Error>> {
     // 首次启动创建配置 / 数据 / 日志三个平台标准目录（tech/08 8.1）。
     let config_dir = app.path().app_config_dir()?;
     let data_dir = app.path().app_data_dir()?;
@@ -125,6 +143,9 @@ async fn init_services(app: &mut tauri::App) -> Result<AppState, Box<dyn std::er
     let injector = platform::inject::default_injector(app.handle().clone())?;
     let notifier = platform::notify::TauriNotifier::new(app.handle().clone());
     let inject_service = services::inject::InjectService::new(injector, notifier, config.clone());
+
+    // T-015 系统托盘：双态图标 + 菜单 + 左键唤起小窗 + 录音状态联动。
+    tray::setup_tray(app, event_tx.subscribe(), process_start)?;
 
     Ok(AppState::new(
         config,

@@ -8,8 +8,8 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# 核心（tech/02 2.3）
-tauri = { version = "2", features = [] }
+# 核心（tech/02 2.3；tray-icon = T-015 托盘，image-png = 托盘图标解码）
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 # 全局快捷键（tech/02 2.3 系统能力表；T-004 登记，三平台按住 / 切换双模式）
