@@ -1,10 +1,30 @@
-/* 全局样式入口（tech/03 3.7）：CSS 变量定义在 :root，明暗主题后续通过 data-theme 切换。 */
+/* 全局样式入口（tech/03 3.7）：CSS 变量定义在 :root，明暗主题通过 data-theme 切换（v1.0）。 */
+
 :root {
-  --vt-color-primary: #6366f1;
-  --vt-color-bg: #ffffff;
-  --vt-color-text: #1f2933;
+  /* 产品级变量（PRD 4.5 视觉规范，浅色主题） */
+  --vt-color-primary: #3b82f6;
+  --vt-color-primary-hover: #2563eb;
+  --vt-color-bg: #f7f8fa;
+  --vt-color-surface: #ffffff;
+  --vt-color-text: #1e293b;
+  --vt-color-text-muted: #64748b;
+  --vt-color-border: #e2e8f0;
+  --vt-color-nav-active-bg: #f1f5f9;
+  --vt-color-success: #16a34a;
+  --vt-color-warning: #d97706;
   --vt-color-error: #dc2626;
+
+  /* 布局尺寸（PRD 4.2.1） */
+  --vt-sidebar-width: 240px;
+  --vt-groups-width: 280px;
+
+  /* 间距与圆角 */
+  --vt-spacing-xs: 4px;
+  --vt-spacing-sm: 8px;
   --vt-spacing-md: 16px;
+  --vt-spacing-lg: 24px;
+  --vt-radius-card: 10px;
+  --vt-radius-control: 6px;
 }
 
 * {
@@ -23,16 +43,258 @@ body {
   color: var(--vt-color-text);
   font-family:
     -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  font-size: 14px;
 }
 
-.app-shell {
-  padding: var(--vt-spacing-md);
+/* 键盘焦点清晰可见（PRD 4.8） */
+:focus-visible {
+  outline: 2px solid var(--vt-color-primary);
+  outline-offset: 2px;
 }
 
-.ping-result {
+/* ============ 设置主窗口三栏外壳（PRD 4.2.1，UI-FIX-01） ============ */
+
+.shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 一级导航（左栏，固定不随内容滚动） */
+.shell-sidebar {
+  width: var(--vt-sidebar-width);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vt-spacing-sm);
+  padding: var(--vt-spacing-md) var(--vt-spacing-sm);
+  background: var(--vt-color-surface);
+  border-right: 1px solid var(--vt-color-border);
+  overflow-y: auto;
+}
+
+.shell-back {
+  display: flex;
+  align-items: center;
+  gap: var(--vt-spacing-sm);
+  padding: var(--vt-spacing-sm) var(--vt-spacing-md);
+  border: none;
+  border-radius: var(--vt-radius-control);
+  background: transparent;
+  color: var(--vt-color-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: start;
+}
+
+.shell-back:hover {
+  background: var(--vt-color-nav-active-bg);
+  color: var(--vt-color-text);
+}
+
+.shell-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shell-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--vt-spacing-md);
+  padding: 10px var(--vt-spacing-md);
+  border-radius: var(--vt-radius-control);
+  color: var(--vt-color-text);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.shell-nav-item:hover {
+  background: var(--vt-color-nav-active-bg);
+}
+
+/* 选中项：浅灰底 + 左侧主色竖条（PRD 4.2.1） */
+.shell-nav-item--active {
+  background: var(--vt-color-nav-active-bg);
+  box-shadow: inset 3px 0 0 var(--vt-color-primary);
+  font-weight: 600;
+}
+
+.shell-nav-icon {
+  font-size: 16px;
+  color: var(--vt-color-text-muted);
+}
+
+.shell-nav-item--active .shell-nav-icon {
   color: var(--vt-color-primary);
 }
 
-.ping-error {
-  color: var(--vt-color-error);
+/* 主区域 */
+.shell-main {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+/* 二级导航（中栏） */
+.shell-groups {
+  width: var(--vt-groups-width);
+  flex-shrink: 0;
+  padding: var(--vt-spacing-lg) var(--vt-spacing-md);
+  background: var(--vt-color-surface);
+  border-right: 1px solid var(--vt-color-border);
+  overflow-y: auto;
+}
+
+.shell-groups-header {
+  margin-bottom: var(--vt-spacing-md);
+}
+
+.shell-groups-title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.shell-groups-subtitle {
+  margin: var(--vt-spacing-xs) 0 0;
+  font-size: 12px;
+  color: var(--vt-color-text-muted);
+}
+
+.shell-group-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shell-group-item {
+  display: block;
+  padding: 9px var(--vt-spacing-md);
+  border-radius: var(--vt-radius-control);
+  color: var(--vt-color-text);
+  text-decoration: none;
+  font-size: 13.5px;
+}
+
+.shell-group-item:hover {
+  background: var(--vt-color-nav-active-bg);
+}
+
+.shell-group-item--active {
+  background: var(--vt-color-nav-active-bg);
+  box-shadow: inset 3px 0 0 var(--vt-color-primary);
+  font-weight: 600;
+}
+
+/* 内容区：唯一滚动区域 */
+.shell-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--vt-spacing-lg) 32px 48px;
+}
+
+/* 窗口变窄（<1000px）时中栏收起为内容区顶部的标签页（PRD 4.2.1） */
+@media (max-width: 1000px) {
+  .shell-main {
+    flex-direction: column;
+  }
+
+  .shell-groups {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--vt-color-border);
+    padding: var(--vt-spacing-sm) var(--vt-spacing-md);
+  }
+
+  .shell-group-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    gap: var(--vt-spacing-xs);
+  }
+
+  .shell-group-item {
+    white-space: nowrap;
+  }
+}
+
+/* ============ 设置页通用（PRD 4.4） ============ */
+
+.settings-page {
+  max-width: 880px;
+}
+
+.settings-page-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.settings-page-desc {
+  margin: var(--vt-spacing-xs) 0 var(--vt-spacing-lg);
+  font-size: 13px;
+  color: var(--vt-color-text-muted);
+}
+
+.settings-group {
+  margin-bottom: var(--vt-spacing-lg);
+}
+
+.settings-group-title {
+  margin: 0 0 var(--vt-spacing-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vt-color-text-muted);
+}
+
+.settings-card {
+  background: var(--vt-color-surface);
+  border: 1px solid var(--vt-color-border);
+  border-radius: var(--vt-radius-card);
+  overflow: hidden;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vt-spacing-lg);
+  padding: 14px 20px;
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid var(--vt-color-border);
+}
+
+.settings-row-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-row-desc {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--vt-color-text-muted);
+  max-width: 560px;
+}
+
+.settings-row-control {
+  flex-shrink: 0;
+}
+
+.settings-error {
+  margin-top: var(--vt-spacing-lg);
+}
+
+/* 数据目录等只读路径 */
+.dir-path {
+  min-width: 280px;
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: var(--vt-spacing-sm);
 }

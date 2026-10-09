@@ -1,0 +1,131 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`路由表与导航元信息一致性（T-002） > 导航元信息快照 1`] = `
+[
+  {
+    "children": [
+      {
+        "path": "/coding/scenes",
+        "titleKey": "navChildren.coding.scenes",
+      },
+      {
+        "path": "/coding/commands",
+        "titleKey": "navChildren.coding.commands",
+      },
+      {
+        "path": "/coding/glossary",
+        "titleKey": "navChildren.coding.glossary",
+      },
+    ],
+    "icon": "pi pi-code",
+    "key": "coding",
+    "order": 1,
+    "path": "/coding/scenes",
+  },
+  {
+    "children": [
+      {
+        "path": "/dict/replace",
+        "titleKey": "navChildren.dict.replace",
+      },
+      {
+        "path": "/dict/proper-nouns",
+        "titleKey": "navChildren.dict.properNouns",
+      },
+    ],
+    "icon": "pi pi-book",
+    "key": "dict",
+    "order": 2,
+    "path": "/dict/replace",
+  },
+  {
+    "children": [
+      {
+        "path": "/ai/templates",
+        "titleKey": "navChildren.ai.templates",
+      },
+      {
+        "path": "/ai/mcp",
+        "titleKey": "navChildren.ai.mcp",
+      },
+      {
+        "path": "/ai/providers",
+        "titleKey": "navChildren.ai.providers",
+      },
+    ],
+    "icon": "pi pi-bolt",
+    "key": "ai",
+    "order": 3,
+    "path": "/ai/templates",
+  },
+  {
+    "children": [
+      {
+        "path": "/general/interface",
+        "titleKey": "navChildren.general.interface",
+      },
+      {
+        "path": "/general/input",
+        "titleKey": "navChildren.general.input",
+      },
+      {
+        "path": "/general/output",
+        "titleKey": "navChildren.general.output",
+      },
+      {
+        "path": "/general/recording",
+        "titleKey": "navChildren.general.recording",
+      },
+      {
+        "path": "/general/system",
+        "titleKey": "navChildren.general.system",
+      },
+      {
+        "path": "/general/models",
+        "titleKey": "navChildren.general.models",
+      },
+    ],
+    "icon": "pi pi-sliders-h",
+    "key": "general",
+    "order": 4,
+    "path": "/general/interface",
+  },
+  {
+    "children": [
+      {
+        "path": "/me/profile",
+        "titleKey": "navChildren.me.profile",
+      },
+      {
+        "path": "/me/backup",
+        "titleKey": "navChildren.me.backup",
+      },
+    ],
+    "icon": "pi pi-user",
+    "key": "me",
+    "order": 5,
+    "path": "/me/profile",
+  },
+  {
+    "children": [],
+    "icon": "pi pi-chart-bar",
+    "key": "stats",
+    "order": 6,
+    "path": "/stats",
+  },
+  {
+    "children": [],
+    "icon": "pi pi-question-circle",
+    "key": "faq",
+    "order": 7,
+    "path": "/faq",
+  },
+  {
+    "children": [],
+    "icon": "pi pi-info-circle",
+    "key": "about",
+    "order": 8,
+    "path": "/about",
+  },
+]
+`;

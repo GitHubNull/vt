@@ -1,0 +1,312 @@
+/**
+ * PrimeVue 4 浅色主题（tech/03 3.3 / 3.7）。
+ * 以 CSS 变量（--p-* 设计 token）提供浅色预设；明暗切换预留 data-theme 机制（v1.0 T-1036）。
+ * 仅定义 v0.1 用到的组件 token：Button / ToggleSwitch / Select / Dialog / InputText / Message。
+ */
+
+:root {
+  /* ---- 调色板：明亮蓝主色（PRD 4.5.1） ---- */
+  --p-primary-50: #eff6ff;
+  --p-primary-100: #dbeafe;
+  --p-primary-200: #bfdbfe;
+  --p-primary-300: #93c5fd;
+  --p-primary-400: #60a5fa;
+  --p-primary-500: #3b82f6;
+  --p-primary-600: #2563eb;
+  --p-primary-700: #1d4ed8;
+  --p-primary-800: #1e40af;
+  --p-primary-900: #1e3a8a;
+  --p-primary-950: #172554;
+
+  /* ---- 中性色 ---- */
+  --p-surface-0: #ffffff;
+  --p-surface-50: #f8fafc;
+  --p-surface-100: #f1f5f9;
+  --p-surface-200: #e2e8f0;
+  --p-surface-300: #cbd5e1;
+  --p-surface-400: #94a3b8;
+  --p-surface-500: #64748b;
+  --p-surface-600: #475569;
+  --p-surface-700: #334155;
+  --p-surface-800: #1e293b;
+  --p-surface-900: #0f172a;
+  --p-surface-950: #020617;
+
+  /* ---- 内容语义 token ---- */
+  --p-content-background: var(--p-surface-0);
+  --p-content-hover-background: var(--p-surface-50);
+  --p-content-border-color: var(--p-surface-200);
+  --p-content-color: var(--p-surface-800);
+  --p-content-hover-color: var(--p-surface-900);
+  --p-content-secondary-color: var(--p-surface-600);
+  --p-content-secondary-hover-color: var(--p-surface-700);
+  --p-text-muted-color: var(--p-surface-500);
+  --p-text-hover-muted-color: var(--p-surface-600);
+
+  /* ---- 通用 ---- */
+  --p-border-radius-none: 0;
+  --p-border-radius-xs: 2px;
+  --p-border-radius-sm: 4px;
+  --p-border-radius-md: 6px;
+  --p-border-radius-lg: 8px;
+  --p-border-radius-xl: 12px;
+  --p-transition-duration: 0.2s;
+  --p-disabled-opacity: 0.6;
+  --p-icon-size: 1rem;
+  --p-anchor-gutter: 2px;
+  --p-focus-ring-width: 2px;
+  --p-focus-ring-style: solid;
+  --p-focus-ring-color: var(--p-primary-500);
+  --p-focus-ring-offset: 2px;
+  --p-focus-ring-shadow: none;
+  --p-mask-background: rgba(15, 23, 42, 0.4);
+  --p-overlay-modal-background: var(--p-mask-background);
+
+  /* ---- Button ---- */
+  --p-button-border-radius: var(--p-border-radius-md);
+  --p-button-rounded-border-radius: 2rem;
+  --p-button-gap: 0.5rem;
+  --p-button-padding-x: 1rem;
+  --p-button-padding-y: 0.5rem;
+  --p-button-icon-only-width: 2.5rem;
+  --p-button-sm-font-size: 0.875rem;
+  --p-button-sm-padding-x: 0.75rem;
+  --p-button-sm-padding-y: 0.375rem;
+  --p-button-sm-icon-only-width: 2rem;
+  --p-button-lg-font-size: 1.125rem;
+  --p-button-lg-padding-x: 1.25rem;
+  --p-button-lg-padding-y: 0.625rem;
+  --p-button-lg-icon-only-width: 3rem;
+  --p-button-label-font-weight: 500;
+  --p-button-raised-shadow: 0 2px 4px rgba(15, 23, 42, 0.1);
+  --p-button-transition-duration: var(--p-transition-duration);
+  --p-button-focus-ring-width: var(--p-focus-ring-width);
+  --p-button-focus-ring-style: var(--p-focus-ring-style);
+  --p-button-focus-ring-offset: var(--p-focus-ring-offset);
+  --p-button-badge-size: 1rem;
+  --p-button-badge-font-size: 0.75rem;
+  --p-button-primary-background: var(--p-primary-500);
+  --p-button-primary-hover-background: var(--p-primary-600);
+  --p-button-primary-active-background: var(--p-primary-700);
+  --p-button-primary-border-color: var(--p-primary-500);
+  --p-button-primary-hover-border-color: var(--p-primary-600);
+  --p-button-primary-active-border-color: var(--p-primary-700);
+  --p-button-primary-color: #ffffff;
+  --p-button-primary-hover-color: #ffffff;
+  --p-button-primary-active-color: #ffffff;
+  --p-button-primary-focus-ring-color: var(--p-primary-500);
+  --p-button-primary-focus-ring-shadow: var(--p-focus-ring-shadow);
+  --p-button-secondary-background: var(--p-surface-0);
+  --p-button-secondary-hover-background: var(--p-surface-100);
+  --p-button-secondary-active-background: var(--p-surface-200);
+  --p-button-secondary-border-color: var(--p-surface-200);
+  --p-button-secondary-hover-border-color: var(--p-surface-300);
+  --p-button-secondary-active-border-color: var(--p-surface-300);
+  --p-button-secondary-color: var(--p-surface-700);
+  --p-button-secondary-hover-color: var(--p-surface-800);
+  --p-button-secondary-active-color: var(--p-surface-800);
+  --p-button-secondary-focus-ring-color: var(--p-surface-500);
+  --p-button-secondary-focus-ring-shadow: var(--p-focus-ring-shadow);
+  --p-button-link-color: var(--p-primary-500);
+  --p-button-link-hover-color: var(--p-primary-600);
+  --p-button-link-active-color: var(--p-primary-700);
+
+  /* ---- ToggleSwitch ---- */
+  --p-toggleswitch-width: 2.5rem;
+  --p-toggleswitch-height: 1.5rem;
+  --p-toggleswitch-border-radius: 30px;
+  --p-toggleswitch-background: var(--p-surface-300);
+  --p-toggleswitch-hover-background: var(--p-surface-400);
+  --p-toggleswitch-border-color: transparent;
+  --p-toggleswitch-hover-border-color: transparent;
+  --p-toggleswitch-border-width: 1px;
+  --p-toggleswitch-checked-background: var(--p-primary-500);
+  --p-toggleswitch-checked-hover-background: var(--p-primary-600);
+  --p-toggleswitch-checked-border-color: transparent;
+  --p-toggleswitch-checked-hover-border-color: transparent;
+  --p-toggleswitch-disabled-background: var(--p-surface-200);
+  --p-toggleswitch-handle-background: var(--p-surface-0);
+  --p-toggleswitch-handle-hover-background: var(--p-surface-0);
+  --p-toggleswitch-handle-checked-background: var(--p-surface-0);
+  --p-toggleswitch-handle-checked-hover-background: var(--p-surface-0);
+  --p-toggleswitch-handle-disabled-background: var(--p-surface-100);
+  --p-toggleswitch-handle-color: var(--p-surface-500);
+  --p-toggleswitch-handle-hover-color: var(--p-surface-600);
+  --p-toggleswitch-handle-checked-color: var(--p-primary-500);
+  --p-toggleswitch-handle-checked-hover-color: var(--p-primary-600);
+  --p-toggleswitch-handle-border-radius: 50%;
+  --p-toggleswitch-handle-size: 1rem;
+  --p-toggleswitch-shadow: 0 1px 2px rgba(15, 23, 42, 0.15);
+  --p-toggleswitch-gap: 0.25rem;
+  --p-toggleswitch-invalid-border-color: #f87171;
+  --p-toggleswitch-slide-duration: 0.2s;
+  --p-toggleswitch-transition-duration: var(--p-transition-duration);
+  --p-toggleswitch-focus-ring-width: var(--p-focus-ring-width);
+  --p-toggleswitch-focus-ring-style: var(--p-focus-ring-style);
+  --p-toggleswitch-focus-ring-color: var(--p-primary-500);
+  --p-toggleswitch-focus-ring-offset: var(--p-focus-ring-offset);
+  --p-toggleswitch-focus-ring-shadow: var(--p-focus-ring-shadow);
+
+  /* ---- Select ---- */
+  --p-select-background: var(--p-surface-0);
+  --p-select-hover-background: var(--p-surface-0);
+  --p-select-focus-background: var(--p-surface-0);
+  --p-select-color: var(--p-surface-800);
+  --p-select-placeholder-color: var(--p-surface-400);
+  --p-select-shadow: none;
+  --p-select-padding-x: 0.75rem;
+  --p-select-padding-y: 0.5rem;
+  --p-select-border-radius: var(--p-border-radius-md);
+  --p-select-border-color: var(--p-surface-200);
+  --p-select-hover-border-color: var(--p-surface-300);
+  --p-select-focus-border-color: var(--p-primary-500);
+  --p-select-invalid-border-color: #f87171;
+  --p-select-invalid-placeholder-color: #f87171;
+  --p-select-disabled-background: var(--p-surface-100);
+  --p-select-disabled-color: var(--p-surface-400);
+  --p-select-dropdown-color: var(--p-surface-500);
+  --p-select-dropdown-width: 2.5rem;
+  --p-select-transition-duration: var(--p-transition-duration);
+  --p-select-focus-ring-width: var(--p-focus-ring-width);
+  --p-select-focus-ring-style: var(--p-focus-ring-style);
+  --p-select-focus-ring-color: var(--p-primary-500);
+  --p-select-focus-ring-offset: var(--p-focus-ring-offset);
+  --p-select-focus-ring-shadow: var(--p-focus-ring-shadow);
+  --p-select-sm-font-size: 0.875rem;
+  --p-select-sm-padding-x: 0.625rem;
+  --p-select-sm-padding-y: 0.375rem;
+  --p-select-lg-font-size: 1.125rem;
+  --p-select-lg-padding-x: 0.875rem;
+  --p-select-lg-padding-y: 0.625rem;
+  --p-select-filled-background: var(--p-surface-50);
+  --p-select-filled-hover-background: var(--p-surface-50);
+  --p-select-filled-focus-background: var(--p-surface-50);
+  --p-select-overlay-background: var(--p-surface-0);
+  --p-select-overlay-border-color: var(--p-surface-200);
+  --p-select-overlay-border-radius: var(--p-border-radius-md);
+  --p-select-overlay-color: var(--p-surface-800);
+  --p-select-overlay-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.1);
+  --p-select-list-padding: 0.25rem;
+  --p-select-list-gap: 2px;
+  --p-select-list-header-padding: 0.5rem 0.75rem;
+  --p-select-option-padding: 0.5rem 0.75rem;
+  --p-select-option-border-radius: var(--p-border-radius-sm);
+  --p-select-option-color: var(--p-surface-700);
+  --p-select-option-focus-background: var(--p-surface-100);
+  --p-select-option-focus-color: var(--p-surface-800);
+  --p-select-option-selected-background: var(--p-primary-50);
+  --p-select-option-selected-color: var(--p-primary-700);
+  --p-select-option-selected-focus-background: var(--p-primary-100);
+  --p-select-option-selected-focus-color: var(--p-primary-800);
+  --p-select-option-group-background: transparent;
+  --p-select-option-group-color: var(--p-surface-500);
+  --p-select-option-group-padding: 0.5rem 0.75rem;
+  --p-select-option-group-font-weight: 600;
+  --p-select-checkmark-color: var(--p-primary-600);
+  --p-select-checkmark-gutter-start: -0.375rem;
+  --p-select-checkmark-gutter-end: 0.5rem;
+  --p-select-clear-icon-color: var(--p-surface-400);
+  --p-select-empty-message-padding: 0.5rem 0.75rem;
+
+  /* ---- Dialog ---- */
+  --p-dialog-background: var(--p-surface-0);
+  --p-dialog-border-color: var(--p-surface-200);
+  --p-dialog-color: var(--p-surface-800);
+  --p-dialog-border-radius: 10px;
+  --p-dialog-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.15);
+  --p-dialog-header-padding: 1rem 1.25rem;
+  --p-dialog-header-gap: 0.5rem;
+  --p-dialog-content-padding: 0 1.25rem 1.25rem;
+  --p-dialog-footer-padding: 0 1.25rem 1.25rem;
+  --p-dialog-footer-gap: 0.5rem;
+  --p-dialog-title-font-size: 1rem;
+  --p-dialog-title-font-weight: 600;
+
+  /* ---- InputText ---- */
+  --p-inputtext-background: var(--p-surface-0);
+  --p-inputtext-color: var(--p-surface-800);
+  --p-inputtext-placeholder-color: var(--p-surface-400);
+  --p-inputtext-shadow: none;
+  --p-inputtext-padding-x: 0.75rem;
+  --p-inputtext-padding-y: 0.5rem;
+  --p-inputtext-border-radius: var(--p-border-radius-md);
+  --p-inputtext-border-color: var(--p-surface-200);
+  --p-inputtext-hover-border-color: var(--p-surface-300);
+  --p-inputtext-focus-border-color: var(--p-primary-500);
+  --p-inputtext-invalid-border-color: #f87171;
+  --p-inputtext-invalid-placeholder-color: #f87171;
+  --p-inputtext-disabled-background: var(--p-surface-100);
+  --p-inputtext-disabled-color: var(--p-surface-400);
+  --p-inputtext-transition-duration: var(--p-transition-duration);
+  --p-inputtext-focus-ring-width: var(--p-focus-ring-width);
+  --p-inputtext-focus-ring-style: var(--p-focus-ring-style);
+  --p-inputtext-focus-ring-color: var(--p-primary-500);
+  --p-inputtext-focus-ring-offset: var(--p-focus-ring-offset);
+  --p-inputtext-focus-ring-shadow: var(--p-focus-ring-shadow);
+  --p-inputtext-sm-font-size: 0.875rem;
+  --p-inputtext-sm-padding-x: 0.625rem;
+  --p-inputtext-sm-padding-y: 0.375rem;
+  --p-inputtext-lg-font-size: 1.125rem;
+  --p-inputtext-lg-padding-x: 0.875rem;
+  --p-inputtext-lg-padding-y: 0.625rem;
+  --p-inputtext-filled-background: var(--p-surface-50);
+  --p-inputtext-filled-hover-background: var(--p-surface-50);
+  --p-inputtext-filled-focus-background: var(--p-surface-50);
+
+  /* ---- Message ---- */
+  --p-message-border-radius: var(--p-border-radius-md);
+  --p-message-border-width: 1px;
+  --p-message-outlined-border-width: 1px;
+  --p-message-icon-size: 1rem;
+  --p-message-icon-lg-size: 1.25rem;
+  --p-message-icon-sm-size: 0.875rem;
+  --p-message-content-padding: 0.625rem 0.75rem;
+  --p-message-content-lg-padding: 0.75rem 1rem;
+  --p-message-content-sm-padding: 0.375rem 0.625rem;
+  --p-message-simple-content-padding: 0.5rem 0;
+  --p-message-content-gap: 0.5rem;
+  --p-message-text-font-size: 0.875rem;
+  --p-message-text-lg-font-size: 1rem;
+  --p-message-text-sm-font-size: 0.875rem;
+  --p-message-text-font-weight: 500;
+  --p-message-transition-duration: var(--p-transition-duration);
+  --p-message-secondary-background: var(--p-surface-100);
+  --p-message-secondary-border-color: var(--p-surface-200);
+  --p-message-secondary-color: var(--p-surface-700);
+  --p-message-secondary-simple-color: var(--p-surface-600);
+  --p-message-secondary-outlined-color: var(--p-surface-700);
+  --p-message-secondary-outlined-border-color: var(--p-surface-200);
+  --p-message-info-background: var(--p-primary-50);
+  --p-message-info-border-color: var(--p-primary-200);
+  --p-message-info-color: var(--p-primary-800);
+  --p-message-info-simple-color: var(--p-primary-600);
+  --p-message-info-outlined-color: var(--p-primary-700);
+  --p-message-info-outlined-border-color: var(--p-primary-300);
+  --p-message-success-background: #f0fdf4;
+  --p-message-success-border-color: #bbf7d0;
+  --p-message-success-color: #166534;
+  --p-message-success-simple-color: #16a34a;
+  --p-message-success-outlined-color: #15803d;
+  --p-message-success-outlined-border-color: #86efac;
+  --p-message-warn-background: #fffbeb;
+  --p-message-warn-border-color: #fde68a;
+  --p-message-warn-color: #92400e;
+  --p-message-warn-simple-color: #d97706;
+  --p-message-warn-outlined-color: #b45309;
+  --p-message-warn-outlined-border-color: #fcd34d;
+  --p-message-error-background: #fef2f2;
+  --p-message-error-border-color: #fecaca;
+  --p-message-error-color: #991b1b;
+  --p-message-error-simple-color: #dc2626;
+  --p-message-error-outlined-color: #b91c1c;
+  --p-message-error-outlined-border-color: #fca5a5;
+  --p-message-shadow: none;
+}
+
+/*
+ * 深色主题占位（v1.0 T-1036）：切换机制为给根元素设置 data-theme="dark"。
+ * v0.1 仅浅色，此处保留空钩子以便统一切换入口。
+ */
+[data-theme='dark'] {
+  /* TODO(v1.0): 定义深色 token */
+}
