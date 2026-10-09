@@ -33,6 +33,7 @@ fn main() {
             commands::config::get_config,
             commands::config::set_config,
             commands::hotkey::trigger_test_hotkey,
+            commands::audio::list_audio_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running vibetype application");
@@ -81,10 +82,8 @@ async fn init_services(app: &mut tauri::App) -> Result<AppState, Box<dyn std::er
     // ConfigStore 单例：加载配置（损坏自动回退 .bak / 默认）。
     let config = services::config_store::ConfigStore::load(&config_dir, event_tx.clone())?;
 
-    // 录音控制通道（tech/04 4.2，容量 8）：快捷键 → AudioService（T-005 消费）。
+    // 录音控制通道（tech/04 4.2，容量 8）：快捷键 → AudioService。
     let (record_tx, record_rx) = tokio::sync::mpsc::channel(8);
-    // T-004 联调：临时消费者记录日志验证事件流（T-005 起由 AudioService 接管）。
-    spawn_record_command_logger(record_rx);
 
     // T-004 全局快捷键：注册失败（被占用 / 权限缺失）不致命，错误经事件通知前端。
     let (raw_tx, raw_rx) = tokio::sync::mpsc::channel(8);
@@ -105,18 +104,20 @@ async fn init_services(app: &mut tauri::App) -> Result<AppState, Box<dyn std::er
     }
     hotkey.start(config.clone(), raw_rx, event_tx.subscribe());
 
-    Ok(AppState::new(config, record_tx))
-}
+    // T-005 音频采集：actor 消费录音控制命令；预热开启失败自动重试（NFR-R-03）。
+    let audio_backend = platform::audio::default_backend();
+    let audio = std::sync::Arc::new(services::audio::AudioService::new(
+        audio_backend.clone(),
+        config.clone(),
+        event_tx.clone(),
+    ));
+    audio.start(
+        record_rx,
+        event_tx.subscribe(),
+        services::audio::REOPEN_RETRY,
+    );
 
-/// 临时联调消费者：把录音控制命令记日志（T-004；T-005 由 AudioService 接管）。
-fn spawn_record_command_logger(
-    mut rx: tokio::sync::mpsc::Receiver<services::hotkey::RecordCommand>,
-) {
-    tauri::async_runtime::spawn(async move {
-        while let Some(cmd) = rx.recv().await {
-            tracing::info!(?cmd, "录音控制命令");
-        }
-    });
+    Ok(AppState::new(config, record_tx, audio_backend))
 }
 
 /// 事件桥：把服务广播的 AppEvent 转换为 Tauri Event 推给全部窗口（tech/03 3.5）。
