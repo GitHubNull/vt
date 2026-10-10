@@ -28,6 +28,14 @@ pub const ERR_EMPTY_TEXT: u32 = 1;
 /// 错误编号：全部上屏路径失败且兜底写剪贴板也失败。
 pub const ERR_ALL_PATHS_FAILED: u32 = 2;
 
+/// 粘贴快捷键发出后、恢复原剪贴板前的等待时延。
+///
+/// `simulate_paste`（enigo SendInput）只把 Ctrl+V 事件送入系统输入队列即返回，
+/// 目标应用异步处理按键并读取剪贴板；若立即恢复剪贴板，目标应用读到的将是
+/// 旧内容（Windows 上必现，表现为"粘贴出历史剪贴板内容"）。等待目标应用
+/// 完成粘贴后再恢复。
+const PASTE_SETTLE_DURATION: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// 系统通知抽象（F-INPUT-09 无焦点兜底提示；测试以 mock 断言）。
 pub trait Notifier: Send + Sync {
     /// 发送系统通知（尽力而为：失败只记日志，不影响主流程）。
@@ -143,7 +151,12 @@ impl InjectService {
                 injector.simulate_paste()
             })();
             // 无论粘贴成败，按配置恢复原剪贴板（PRD 3.1.3 规则 1）。
+            // 粘贴成功时须等待目标应用完成粘贴（PASTE_SETTLE_DURATION），
+            // 否则目标应用会读到恢复后的旧内容。
             if !keep_text_in_clipboard {
+                if paste_result.is_ok() {
+                    std::thread::sleep(PASTE_SETTLE_DURATION);
+                }
                 if let Err(err) = injector.clipboard_restore(&backup) {
                     warn!(error = %err, "剪贴板恢复失败");
                 }
@@ -276,6 +289,24 @@ mod tests {
         assert_eq!(env.injector.clipboard_content(), "原剪贴板内容");
         // 兜底未触发。
         assert!(env.notifier.notifications().is_empty());
+    }
+
+    #[tokio::test]
+    async fn paste_settles_before_clipboard_restore() {
+        // 回归：粘贴快捷键发出后须驻留 PASTE_SETTLE_DURATION 再恢复剪贴板，
+        // 否则目标应用（Windows 必现）读到的是恢复后的旧剪贴板内容。
+        let env = setup(None).await;
+        env.service.inject_text("驻留时延").await.unwrap();
+        assert_eq!(
+            env.injector.ops.lock().unwrap().as_slice(),
+            &["backup", "write", "paste", "restore"]
+        );
+        let paste_at = env.injector.paste_at.lock().unwrap().unwrap();
+        let restore_at = env.injector.restore_at.lock().unwrap().unwrap();
+        assert!(
+            restore_at.duration_since(paste_at) >= PASTE_SETTLE_DURATION,
+            "恢复剪贴板前须等待目标应用完成粘贴"
+        );
     }
 
     #[tokio::test]

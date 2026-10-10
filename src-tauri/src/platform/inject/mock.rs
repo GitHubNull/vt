@@ -35,6 +35,12 @@ pub struct MockTextInjector {
     pub fail_paste: AtomicBool,
     pub focus: Mutex<FocusState>,
     pub focused_app: Mutex<Option<String>>,
+    /// 调用顺序日志（断言"写入 → 粘贴 → 恢复"顺序）。
+    pub ops: Mutex<Vec<&'static str>>,
+    /// simulate_paste 发生时间（断言粘贴后经过驻留时延才恢复剪贴板）。
+    pub paste_at: Mutex<Option<std::time::Instant>>,
+    /// clipboard_restore 发生时间。
+    pub restore_at: Mutex<Option<std::time::Instant>>,
 }
 
 impl Default for MockTextInjector {
@@ -52,6 +58,9 @@ impl Default for MockTextInjector {
             fail_paste: AtomicBool::new(false),
             focus: Mutex::new(FocusState::Focused),
             focused_app: Mutex::new(None),
+            ops: Mutex::new(Vec::new()),
+            paste_at: Mutex::new(None),
+            restore_at: Mutex::new(None),
         }
     }
 }
@@ -97,6 +106,7 @@ impl super::TextInjector for MockTextInjector {
     }
 
     fn clipboard_backup(&self) -> Result<ClipboardBackup, InjectError> {
+        self.ops.lock().unwrap().push("backup");
         self.backups.lock().unwrap().push(());
         Ok(ClipboardBackup::Text(
             self.clipboard.lock().unwrap().clone(),
@@ -104,6 +114,7 @@ impl super::TextInjector for MockTextInjector {
     }
 
     fn write_clipboard(&self, text: &str) -> Result<(), InjectError> {
+        self.ops.lock().unwrap().push("write");
         if self.fail_clipboard_write.load(Ordering::SeqCst) {
             return Err(InjectError::Clipboard("剪贴板写入失败".to_string()));
         }
@@ -122,14 +133,18 @@ impl super::TextInjector for MockTextInjector {
         } else {
             "ctrl"
         };
+        self.ops.lock().unwrap().push("paste");
         self.pastes
             .lock()
             .unwrap()
             .push(PasteShortcut { modifier, key: 'v' });
+        *self.paste_at.lock().unwrap() = Some(std::time::Instant::now());
         Ok(())
     }
 
     fn clipboard_restore(&self, backup: &ClipboardBackup) -> Result<(), InjectError> {
+        self.ops.lock().unwrap().push("restore");
+        *self.restore_at.lock().unwrap() = Some(std::time::Instant::now());
         self.restores.lock().unwrap().push(backup.clone());
         if let ClipboardBackup::Text(text) = backup {
             *self.clipboard.lock().unwrap() = text.clone();
