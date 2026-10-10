@@ -729,10 +729,14 @@ impl AsrService {
         let downloaded = Arc::new(AtomicU64::new(0));
         let total_known = Arc::new(AtomicU64::new(0));
 
-        // 进度节流广播（含实时速度）；取消 / 失败时由调用方 abort。
+        // 进度节流广播（含实时速度）。
+        // 取消下载是对整个任务 handle.abort()：正常路径的 ticker.abort()（download_inner
+        // 返回前）不会执行，ticker 成为孤儿任务继续广播假进度。故每拍自查下载是否仍在
+        // downloads 注册表（cancel_download 会先摘除注册），不在即退出。
         let ticker = {
             let events = self.events.clone();
             let progress_map = self.download_progress.clone();
+            let downloads = self.downloads.clone();
             let model_id = model_id.to_string();
             let downloaded = downloaded.clone();
             let total_known = total_known.clone();
@@ -740,8 +744,16 @@ impl AsrService {
                 let mut interval = tokio::time::interval(PROGRESS_THROTTLE);
                 let mut last_bytes = 0u64;
                 let mut last_tick = Instant::now();
+                let mut first_tick = true;
                 loop {
                     interval.tick().await;
+                    // 首拍跳过自查：spawn 与注册之间存在理论上的并发窗口，
+                    // 到第二拍注册必然完成（见 download_model）。
+                    if first_tick {
+                        first_tick = false;
+                    } else if !downloads.lock().await.contains_key(&model_id) {
+                        break;
+                    }
                     let done = downloaded.load(Ordering::Relaxed);
                     let total = total_known.load(Ordering::Relaxed);
                     let speed = model_download::speed_of(&mut last_bytes, done, &mut last_tick);
