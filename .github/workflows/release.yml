@@ -83,6 +83,10 @@ jobs:
         with:
           cmake-version: "3.31.6"
 
+      - name: Windows 安装 Ninja（与下方 CMAKE_GENERATOR=Ninja 配套）
+        if: runner.os == 'Windows'
+        run: choco install -y ninja
+
       - name: Linux 系统依赖（GTK/WebKit/ALSA/libclang/cmake/AppIndicator——sherpa-onnx 静态编译与托盘打包所需）
         if: runner.os == 'Linux'
         run: |
@@ -94,6 +98,9 @@ jobs:
 
       - name: 编译打包（Tauri bundle）
         # sherpa-rs 首次在 runner 上全量编译 onnxruntime/sherpa-onnx，单平台可能耗时 30~60 分钟
+        # Windows 强制 Ninja 生成器：runner 镜像的 VS 2026 预览版生成器名与 CMake 3.31 不匹配
+        env:
+          CMAKE_GENERATOR: ${{ runner.os == 'Windows' && 'Ninja' || 'Unix Makefiles' }}
         run: pnpm tauri build
 
       - name: 收集产物并生成校验和
