@@ -37,6 +37,7 @@
 | `@tauri-apps/api` | invoke / event / window API | Tauri 官方 |
 | `@tauri-apps/plugin-dialog` | 原生文件 / 消息对话框 | 导入导出词典、备份等场景（用户指定） |
 | `@tauri-apps/plugin-opener` | 打开链接 / 文件 / 目录 | 关于页打开官网、日志目录等（用户指定） |
+| `marked` | Markdown 渲染（免责声明弹窗，F-ABOUT-03） | 轻量无依赖、活跃维护（MIT）；渲染内容为构建期打包的本地文档，无外部输入 |
 
 ### 开发依赖
 
