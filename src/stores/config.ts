@@ -53,7 +53,12 @@ export function defaultConfig(): AppConfig {
       keep_text_in_clipboard: false,
     },
     dict: { enabled: true },
-    asr: { current_model_id: null },
+    asr: {
+      current_model_id: null,
+      models_dir: null,
+      download_proxy: null,
+      model_source: 'mirror',
+    },
     about: { auto_check_update: true },
   }
 }

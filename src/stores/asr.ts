@@ -127,6 +127,7 @@ export const useAsrStore = defineStore('asr', () => {
           model.progress = {
             downloaded_bytes: payload.downloaded_bytes,
             total_bytes: payload.total_bytes,
+            bytes_per_sec: payload.bytes_per_sec,
           }
         } else {
           model.progress = null

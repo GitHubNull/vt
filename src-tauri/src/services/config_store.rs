@@ -221,12 +221,29 @@ impl Default for DictConfig {
     }
 }
 
-/// 识别引擎设置（F-SET-06 当前模型，T-006）。
+/// 模型下载源（T-017，PRD 3.8.7 v1.5：默认镜像源，两源均 SHA-256 校验）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelSource {
+    /// 国内镜像（hf-mirror.com，作者官方同步仓库）。
+    #[default]
+    Mirror,
+    /// 官方源（GitHub Release 归档）。
+    Official,
+}
+
+/// 识别引擎设置（F-SET-06 当前模型，T-006；下载体验 T-017）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AsrConfig {
     /// 当前激活模型 ID（`None` = 自动选择首个可用模型）。
     pub current_model_id: Option<String>,
+    /// 模型存储目录（`None` = 默认：安装目录旁 `models/`，不可写时回退数据目录）。
+    pub models_dir: Option<String>,
+    /// 模型下载代理（如 `http://127.0.0.1:7890`；`None`/空 = 直连；只作用于模型下载）。
+    pub download_proxy: Option<String>,
+    /// 模型下载源（默认镜像源）。
+    pub model_source: ModelSource,
 }
 
 /// 关于页设置（F-ABOUT-01）。
@@ -397,7 +414,19 @@ impl ConfigStore {
                 config.dict = serde_json::from_value(value).map_err(apply_err)?;
             }
             ConfigSection::Asr => {
-                config.asr = serde_json::from_value(value).map_err(apply_err)?;
+                let asr: AsrConfig = serde_json::from_value(value).map_err(apply_err)?;
+                // T-017：代理只接受 http(s) 代理地址，格式非法直接拒绝（避免下载器报错延迟暴露）。
+                if let Some(proxy) = asr.download_proxy.as_deref() {
+                    if !proxy.is_empty()
+                        && !(proxy.starts_with("http://") || proxy.starts_with("https://"))
+                    {
+                        return Err(AppError::Config(
+                            ERR_BAD_VALUE,
+                            "下载代理须为 http(s):// 地址（留空表示直连）".to_string(),
+                        ));
+                    }
+                }
+                config.asr = asr;
             }
             ConfigSection::About => {
                 config.about = serde_json::from_value(value).map_err(apply_err)?;

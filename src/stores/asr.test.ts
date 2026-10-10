@@ -28,6 +28,7 @@ const model = (patch: Partial<ModelInfo>): ModelInfo => ({
   active: false,
   invalid: false,
   progress: null,
+  models_dir: '/opt/vibetype/models',
   ...patch,
 })
 
@@ -57,7 +58,7 @@ describe('stores/asr（T-014 模型管理）', () => {
   it('statusOf：missing / downloading / downloaded / active / invalid 映射', () => {
     const store = useAsrStore()
     expect(store.statusOf(model({}))).toBe('missing')
-    expect(store.statusOf(model({ progress: { downloaded_bytes: 1, total_bytes: 10 } }))).toBe('downloading')
+    expect(store.statusOf(model({ progress: { downloaded_bytes: 1, total_bytes: 10, bytes_per_sec: 5 } }))).toBe('downloading')
     expect(store.statusOf(model({ downloaded: true }))).toBe('downloaded')
     expect(store.statusOf(model({ downloaded: true, active: true }))).toBe('active')
     expect(store.statusOf(model({ invalid: true }))).toBe('invalid')
@@ -81,9 +82,10 @@ describe('stores/asr（T-014 模型管理）', () => {
       status: 'downloading',
       downloaded_bytes: 50,
       total_bytes: 100,
+      bytes_per_sec: 40,
     })
     const target = store.models.find((m) => m.id === 'paraformer-zh-int8')
-    expect(target?.progress).toEqual({ downloaded_bytes: 50, total_bytes: 100 })
+    expect(target?.progress).toEqual({ downloaded_bytes: 50, total_bytes: 100, bytes_per_sec: 40 })
 
     // 完成：清空 progress 并重新拉取清单（服务端为准）。
     invokeMock.mockResolvedValue([model({ id: 'paraformer-zh-int8', downloaded: true }), models()[1]])
@@ -93,6 +95,7 @@ describe('stores/asr（T-014 模型管理）', () => {
       status: 'completed',
       downloaded_bytes: 100,
       total_bytes: 100,
+      bytes_per_sec: 0,
     })
     await vi.waitFor(() => {
       expect(store.models.find((m) => m.id === 'paraformer-zh-int8')?.progress).toBeNull()

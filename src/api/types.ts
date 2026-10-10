@@ -81,10 +81,16 @@ export interface DictConfig {
   enabled: boolean
 }
 
-/** 识别引擎设置（T-006，F-SET-06 当前模型）。 */
+/** 识别引擎设置（T-006 当前模型；T-017 下载体验）。 */
 export interface AsrConfig {
   /** 当前激活模型 ID（null = 自动选择首个可用模型）。 */
   current_model_id: string | null
+  /** 模型存储目录（null = 默认：安装目录旁 models/，不可写回退数据目录）。 */
+  models_dir: string | null
+  /** 模型下载代理（如 http://127.0.0.1:7890；null/空 = 直连；只作用于模型下载）。 */
+  download_proxy: string | null
+  /** 模型下载源（默认 mirror 镜像源）。 */
+  model_source: 'mirror' | 'official'
 }
 
 /** 关于页设置（F-ABOUT-01）。 */
@@ -172,6 +178,8 @@ export type DownloadState = 'downloading' | 'completed' | 'failed' | 'cancelled'
 export interface DownloadProgress {
   downloaded_bytes: number
   total_bytes: number
+  /** 瞬时下载速度 bytes/sec（T-017）。 */
+  bytes_per_sec: number
 }
 
 /** list_models 返回元素（后端 ModelInfo 序列化形态）。 */
@@ -186,6 +194,8 @@ export interface ModelInfo {
   /** 模型文件存在但哈希校验失败（损坏，引导重新下载）。 */
   invalid: boolean
   progress: DownloadProgress | null
+  /** 生效的模型存储目录（T-017）。 */
+  models_dir: string
 }
 
 /** model:progress 事件载荷：`{ type: "model_download_progress", model_id, status, ... }`。 */
@@ -195,6 +205,7 @@ export interface ModelDownloadProgressPayload {
   status: DownloadState
   downloaded_bytes: number
   total_bytes: number
+  bytes_per_sec: number
 }
 
 /** asr:notice 事件载荷：`{ type: "asr_notice", code, message }`。 */

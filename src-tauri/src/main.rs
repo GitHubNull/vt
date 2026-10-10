@@ -5,6 +5,8 @@
 //! 最小权限说明（AGENTS.md 3.5）：本进程仅访问麦克风（T-005）、全局快捷键（T-004）、
 //! 剪贴板与文本注入（T-007）等系统能力；配置与日志只写入平台标准目录（tech/08 8.1）。
 
+use std::path::Path;
+
 use tauri::{Emitter, Manager};
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
@@ -178,8 +180,13 @@ async fn init_services(
     let notifier = platform::notify::TauriNotifier::new(app.handle().clone());
     let inject_service = services::inject::InjectService::new(injector, notifier, config.clone());
 
-    // T-006 本地 ASR：模型目录在数据目录 models/（NFR-P-09 不进安装包）。
-    let models_dir = data_dir.join("models");
+    // T-006/T-017 本地 ASR：模型目录默认安装目录旁 models/（不可写回退数据目录，
+    // NFR-P-09 不进安装包），可在设置中自定义。
+    let data_models_dir = data_dir.join("models");
+    let exe_dir = std::env::current_exe()
+        .map(|p| p.parent().map(Path::to_path_buf).unwrap_or_default())
+        .unwrap_or_default();
+    let models_dir = services::asr::resolve_default_models_dir(&exe_dir, &data_models_dir);
     std::fs::create_dir_all(&models_dir)?;
     let asr = std::sync::Arc::new(services::asr::AsrService::new(
         models_dir,

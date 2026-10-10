@@ -1,25 +1,33 @@
 <script setup>
 /**
- * 通用 › 模型管理（T-014，F-SET-06、PRD 3.8 节）。
- * 模型卡片：档位 / 大小 / 说明 / 状态；下载进度（model:progress 事件）、
- * 取消 / 失败重试、切换激活（确认 + 即时生效）、删除（plugin-dialog 确认，
- * 删除激活模型给出回退提示）；无模型引导与断网错误提示（错误编号）。
+ * 通用 › 模型管理（T-014，F-SET-06、PRD 3.8 节；下载体验增强 T-017）。
+ * 模型卡片：档位 / 大小 / 说明 / 状态；下载进度 + 实时速度与预计剩余时间
+ * （model:progress 事件）、取消 / 失败重试、切换激活（确认 + 即时生效）、
+ * 删除（plugin-dialog 确认，删除激活模型给出回退提示）；
+ * 下载设置：下载源（镜像默认 / 官方）、下载代理、模型存储位置（plugin-dialog 选择）。
  */
 import { computed, onMounted, ref } from 'vue'
 import Badge from 'primevue/badge'
 import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import ProgressBar from 'primevue/progressbar'
-import { confirm } from '@tauri-apps/plugin-dialog'
+import Select from 'primevue/select'
+import { confirm, open } from '@tauri-apps/plugin-dialog'
+import SettingsRow from '../../components/SettingsRow.vue'
 import { useAsrStore } from '../../stores/asr'
+import { useConfigStore } from '../../stores/config'
+import { toAppError } from '../../api/client'
 import { t } from '../../i18n'
 
 const store = useAsrStore()
+const configStore = useConfigStore()
 /** 切换中的模型 ID（禁用重复操作）。 */
 const switchingId = ref(null)
 
 onMounted(() => {
   void store.ensureLoaded()
+  void configStore.ensureLoaded()
 })
 
 const statusText = computed(() => ({
@@ -38,6 +46,47 @@ function formatBytes(bytes) {
 function progressPercent(model) {
   if (!model.progress || !model.progress.total_bytes) return 0
   return Math.min(100, Math.round((model.progress.downloaded_bytes / model.progress.total_bytes) * 100))
+}
+
+/** 实时速度文本（12 MB/s 量级）；无进展时为 "—"。 */
+function speedText(model) {
+  const speed = model.progress?.bytes_per_sec ?? 0
+  if (!speed) return '—'
+  return t.general.models.speedPerSec.replace('{speed}', formatBytes(speed))
+}
+
+/** 预计剩余时间文本（秒 → 分钟）；速度为 0 或缺总量时不显示。 */
+function etaText(model) {
+  const progress = model.progress
+  if (!progress || !progress.bytes_per_sec || !progress.total_bytes) return ''
+  const remaining = progress.total_bytes - progress.downloaded_bytes
+  if (remaining <= 0) return ''
+  const seconds = Math.ceil(remaining / progress.bytes_per_sec)
+  const text = seconds >= 60 ? `${Math.ceil(seconds / 60)} min` : `${seconds}s`
+  return t.general.models.etaRemaining.replace('{time}', text)
+}
+
+/** 生效的模型存储目录（来自 list_models；空清单时为空串）。 */
+const effectiveModelsDir = computed(() => store.models[0]?.models_dir ?? '')
+
+const sourceOptions = computed(() => [
+  { label: t.general.models.sourceMirror, value: 'mirror' },
+  { label: t.general.models.sourceOfficial, value: 'official' },
+])
+
+function updateAsr(patch) {
+  void configStore.updateSection('asr', { ...configStore.sections.asr, ...patch }).then((ok) => {
+    if (ok) void store.refresh()
+  })
+}
+
+async function chooseModelsDir() {
+  try {
+    const dir = await open({ directory: true, title: t.general.models.dirChooseTitle })
+    if (typeof dir === 'string' && dir) updateAsr({ models_dir: dir })
+  } catch (error) {
+    store.lastError = toAppError(error)
+  }
 }
 
 function errorText(prefix) {
@@ -135,6 +184,7 @@ async function onDelete(model) {
         <div v-if="store.statusOf(model) === 'downloading'" class="model-actions">
           <ProgressBar :value="progressPercent(model)" class="model-progress" />
           <span class="model-progress-text">{{ progressPercent(model) }}%</span>
+          <span class="model-speed">{{ speedText(model) }}<template v-if="etaText(model)"> · {{ etaText(model) }}</template></span>
           <Button
             type="button"
             severity="secondary"
@@ -174,6 +224,62 @@ async function onDelete(model) {
             @click="onDelete(model)"
           />
         </div>
+      </div>
+    </section>
+
+    <section class="settings-group">
+      <h3 class="settings-group-title">{{ t.general.models.downloadSettings }}</h3>
+      <div class="settings-card">
+        <SettingsRow
+          :title="t.general.models.sourceLabel"
+          :desc="t.general.models.sourceDesc"
+        >
+          <Select
+            class="model-source-select"
+            :model-value="configStore.sections.asr.model_source"
+            :options="sourceOptions"
+            option-label="label"
+            option-value="value"
+            :aria-label="t.general.models.sourceLabel"
+            @update:model-value="(v) => updateAsr({ model_source: v })"
+          />
+        </SettingsRow>
+        <SettingsRow
+          :title="t.general.models.proxyLabel"
+          :desc="t.general.models.proxyDesc"
+        >
+          <InputText
+            class="model-proxy-input"
+            :model-value="configStore.sections.asr.download_proxy ?? ''"
+            :placeholder="t.general.models.proxyPlaceholder"
+            :aria-label="t.general.models.proxyLabel"
+            @update:model-value="(v) => updateAsr({ download_proxy: v || null })"
+          />
+        </SettingsRow>
+        <SettingsRow
+          :title="t.general.models.dirLabel"
+          :desc="t.general.models.dirDesc"
+        >
+          <div class="dir-row">
+            <InputText readonly class="dir-path" :model-value="effectiveModelsDir" :aria-label="t.general.models.dirLabel" />
+            <Button
+              type="button"
+              severity="secondary"
+              size="small"
+              icon="pi pi-folder-open"
+              :label="t.general.models.dirChoose"
+              @click="chooseModelsDir"
+            />
+            <Button
+              v-if="configStore.sections.asr.models_dir"
+              type="button"
+              severity="secondary"
+              size="small"
+              :label="t.general.models.dirReset"
+              @click="updateAsr({ models_dir: null })"
+            />
+          </div>
+        </SettingsRow>
       </div>
     </section>
   </div>
@@ -236,6 +342,31 @@ async function onDelete(model) {
   font-size: 12.5px;
   color: var(--vt-color-text-muted);
   min-width: 40px;
+}
+
+.model-speed {
+  font-size: 12.5px;
+  color: var(--vt-color-text-muted);
+  white-space: nowrap;
+}
+
+.model-source-select {
+  width: 220px;
+}
+
+.model-proxy-input {
+  width: 280px;
+}
+
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: var(--vt-spacing-sm);
+}
+
+.dir-path {
+  flex: 1;
+  min-width: 260px;
 }
 
 .models-no-model-desc {

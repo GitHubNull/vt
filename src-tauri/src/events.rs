@@ -94,12 +94,13 @@ pub enum AppEvent {
     /// 终态（上屏完成、失败反馈、无效丢弃）时广播；AudioService 消费后从
     /// Processing 回退到 Idle / Warming（状态机收尾的唯一出口）。
     SessionFinished { session_id: u64 },
-    /// 模型下载进度。
+    /// 模型下载进度（`bytes_per_sec` 为瞬时速度，T-017）。
     ModelDownloadProgress {
         model_id: String,
         status: DownloadStatus,
         downloaded_bytes: u64,
         total_bytes: u64,
+        bytes_per_sec: u64,
     },
     /// 模型管理提示（如删除激活模型后已回退到首个可用模型）。
     AsrNotice { code: String, message: String },
