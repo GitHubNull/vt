@@ -64,6 +64,9 @@
 | `serde` / `serde_json` | 配置与协议序列化 | Rust 事实标准（用户指定） |
 | `thiserror` | 错误类型定义 | 库级错误枚举 |
 | `tracing` + `tracing-subscriber` | 结构化日志 | 日志滚动与脱敏的基础（NFR-S-02） |
+| `tracing-appender` | 按天滚动日志文件 | tracing 官方配套（T-001 登记） |
+| `rusqlite`（`bundled`） | 本地 SQLite（日志数据库目标） | bundled 自带 sqlite3 源码，Windows 交叉编译无系统库依赖（T-018，F-LOG-02） |
+| `regex` | 日志搜索的正则匹配 | Rust 事实标准，日志过滤在消费侧应用（T-018，F-LOG-01） |
 
 ### 实时通信与设备连接
 

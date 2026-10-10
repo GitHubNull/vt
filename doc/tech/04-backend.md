@@ -120,6 +120,9 @@ src-tauri/src/
 - `tracing` + `tracing-subscriber`，按天滚动、保留 7 天（NFR 可观测性）；
 - 全局脱敏过滤器：写入前过滤 API Key、令牌、识别文本、剪贴板内容等模式（NFR-S-02），实现见 [第 8 章](./08-data-and-security.md)；
 - 日志级别：默认 `info`；`debug`/`trace` 仅在用户开启"诊断模式"时生效。
+- **双写管道（F-LOG-02，T-018）**：自定义 `tracing` Layer 把结构化记录（时间戳 / 级别 / target / 消息 / 字段）送入 `mpsc` 无界通道，独立异步消费任务按配置分发到两类目标——按天滚动文本文件（`tracing-appender`）与本地 SQLite 数据库（rusqlite，bundled 编译避免系统依赖）。记录目标可在设置中调整（`log.targets`，至少一项），变更经 `config:changed` 事件热生效：关闭数据库目标即断开连接（查询功能随之不可用），重新开启则重建连接；
+- **日志查询（F-LOG-01）**：级别 / 时间范围在 SQL 侧过滤，关键词 / 正则 / 大小写匹配在消费侧按记录过滤（SQLite 无内置正则）；关键词匹配对 `%` / `_` 转义，正则由 `regex` crate 编译、非法表达式返回 E-LOG 编号错误；单页上限 200 条；
+- **搜索导出（F-LOG-03）**：按当前查询条件流式导出匹配记录，复用导出脱敏头（system_info_header）。
 
 ## 4.8 后端测试
 
