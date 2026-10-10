@@ -15,7 +15,7 @@ use crate::services::config_store::{ConfigSection, ConfigStore};
 /// 错误编号：目标窗口不存在。
 pub const ERR_WINDOW_MISSING: u32 = 1;
 
-/// 悬浮球窗口声明尺寸（tauri.conf.json，胶囊两侧留 4 px 透明边距给动效呼吸）。
+/// 悬浮球窗口声明尺寸（main.rs create_app_windows，胶囊两侧留 4 px 透明边距给动效呼吸）。
 const FLOAT_WINDOW_WIDTH: i32 = 288;
 const FLOAT_WINDOW_HEIGHT: i32 = 52;
 /// 默认落点距屏幕底边距离（未拖动过且策略为底部居中时）。
@@ -23,7 +23,7 @@ const FLOAT_DEFAULT_BOTTOM_MARGIN: i32 = 96;
 
 /// 唤起语音输入小窗（T-009 命令与托盘左键 / 菜单共用）。
 ///
-/// 已存在则取消最小化、显示并聚焦；不存在返回错误（窗口由 tauri.conf.json 声明）。
+/// 已存在则取消最小化、显示并聚焦；不存在返回错误（窗口在 setup 中创建）。
 pub fn show_mini_window(app: &tauri::AppHandle) -> Result<(), AppError> {
     let window = app
         .get_webview_window("mini")
@@ -55,8 +55,7 @@ pub fn show_settings_window(app: &tauri::AppHandle) -> Result<(), AppError> {
 
 /// 显示悬浮球窗口（T-008）：恢复记忆位置（无记忆则屏幕底部居中），随后 show。
 ///
-/// 不抢焦点：窗口在 tauri.conf.json 声明 `focusable: false`（tech/09 9.2.4），
-/// 此处不调用 set_focus。
+/// 不抢焦点：窗口创建时声明 `focusable: false`（tech/09 9.2.4），此处不调用 set_focus。
 pub async fn show_float(app: &tauri::AppHandle, config: &ConfigStore) -> Result<(), AppError> {
     let window = app
         .get_webview_window("float")
@@ -70,7 +69,7 @@ pub async fn show_float(app: &tauri::AppHandle, config: &ConfigStore) -> Result<
     Ok(())
 }
 
-/// 隐藏悬浮球窗口（"销毁"语义：窗口由 tauri.conf.json 常驻声明，录音结束 / 取消 /
+/// 隐藏悬浮球窗口（"销毁"语义：窗口常驻、录音结束 / 取消 /
 /// 结果反馈完成后隐藏，T-008）。
 pub fn hide_float(app: &tauri::AppHandle) -> Result<(), AppError> {
     let window = app

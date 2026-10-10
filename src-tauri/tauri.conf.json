@@ -10,42 +10,7 @@
     "beforeBuildCommand": "pnpm build"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "VibeType 设置",
-        "url": "index.html",
-        "width": 1024,
-        "height": 720,
-        "minWidth": 900,
-        "minHeight": 600
-      },
-      {
-        "label": "mini",
-        "title": "语音输入",
-        "url": "mini.html",
-        "width": 260,
-        "height": 330,
-        "resizable": false,
-        "maximizable": false,
-        "visible": false,
-        "skipTaskbar": true
-      },
-      {
-        "label": "float",
-        "title": "VibeType",
-        "url": "float.html",
-        "width": 288,
-        "height": 52,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "focusable": false,
-        "skipTaskbar": true,
-        "visible": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

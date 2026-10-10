@@ -39,6 +39,10 @@ fn main() {
             init_logging(app)?;
             let state = tauri::async_runtime::block_on(init_services(app, process_start))?;
             app.manage(state);
+            // 窗口必须在 manage(state) 之后创建：tauri.conf.json 声明的窗口在
+            // setup 完成前就会加载前端并 invoke 命令，先于 manage 触发 get_config
+            // 会报 "state not managed"（Windows WebView2 资源缓存后页载极快，必现）。
+            create_app_windows(app)?;
             tracing::info!("VibeType 后端初始化完成");
             Ok(())
         })
@@ -77,6 +81,38 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running vibetype application");
+}
+
+/// 创建三个应用窗口（main 设置窗 / mini 语音小窗 / float 悬浮球）。
+///
+/// 统一在 setup 中、manage(state) 之后创建：配置声明的窗口会与 setup 并发加载
+/// 前端，先 invoke 后 manage 将触发 "state not managed" 时序竞态。
+fn create_app_windows(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+        .title("VibeType 设置")
+        .inner_size(1024.0, 720.0)
+        .min_inner_size(900.0, 600.0)
+        .build()?;
+    tauri::WebviewWindowBuilder::new(app, "mini", tauri::WebviewUrl::App("mini.html".into()))
+        .title("语音输入")
+        .inner_size(260.0, 330.0)
+        .resizable(false)
+        .maximizable(false)
+        .visible(false)
+        .skip_taskbar(true)
+        .build()?;
+    tauri::WebviewWindowBuilder::new(app, "float", tauri::WebviewUrl::App("float.html".into()))
+        .title("VibeType")
+        .inner_size(288.0, 52.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .focusable(false)
+        .skip_taskbar(true)
+        .visible(false)
+        .build()?;
+    Ok(())
 }
 
 /// 初始化 tracing：按天滚动到平台标准日志目录，保留策略见 tech/08 8.1 / tech/04 4.7。
