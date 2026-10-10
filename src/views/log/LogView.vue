@@ -117,7 +117,7 @@ async function onExport() {
 </script>
 
 <template>
-  <div class="settings-page">
+  <div class="settings-page log-page">
     <h2 class="settings-page-title">{{ t.log.title }}</h2>
     <p class="settings-page-desc">{{ t.log.desc }}</p>
 
@@ -153,9 +153,9 @@ async function onExport() {
       </div>
     </section>
 
-    <section class="settings-group">
+    <section class="settings-group log-search-group">
       <h3 class="settings-group-title">{{ t.log.search.group }}</h3>
-      <div class="settings-card">
+      <div class="settings-card log-search-card">
         <Message v-if="!store.dbEnabled" severity="info" :closable="false" class="log-db-hint">
           {{ t.log.search.dbDisabled }}
         </Message>
@@ -203,7 +203,14 @@ async function onExport() {
               :options="LEVEL_OPTIONS"
               class="log-levels"
               :aria-label="t.log.search.levels"
-            />
+              :pt="{ overlay: { class: 'log-levels-overlay' } }"
+            >
+              <template #option="slotProps">
+                <span class="log-level-chip" :class="levelClass(slotProps.option)">
+                  {{ slotProps.option }}
+                </span>
+              </template>
+            </MultiSelect>
             <span class="log-filter-label">{{ t.log.search.from }} — {{ t.log.search.to }}</span>
             <div class="log-time-range">
               <input
@@ -323,6 +330,57 @@ async function onExport() {
   min-width: 180px;
 }
 
+/* PrimeVue 4 MultiSelect 令牌在主题中缺失（tech/03 主题仅定义 select），补 overlay 底色。
+   overlay 被 teleport 到 body，scoped 选择器够不到，须用 :global；
+   叠加基础类名提高特异性，避免被 PrimeVue 基础样式（同优先级后加载）覆盖。 */
+:global(.p-multiselect-overlay.log-levels-overlay) {
+  background: var(--vt-color-surface);
+  border: 1px solid var(--vt-color-border);
+  border-radius: var(--vt-radius-control);
+  box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.15);
+  color: var(--vt-color-text);
+}
+
+:global(.log-levels-overlay .p-multiselect-option) {
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+:global(.log-levels-overlay .p-multiselect-option:hover),
+:global(.log-levels-overlay .p-multiselect-option.p-focus) {
+  background: var(--vt-color-nav-active-bg);
+}
+
+/* 级别选项色块（DEBUG 灰 / INFO 蓝 / WARN 琥珀 / ERROR 红） */
+.log-level-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.log-level-chip.lv-debug {
+  background: rgba(100, 116, 139, 0.15);
+  color: var(--vt-color-text-muted);
+}
+
+.log-level-chip.lv-info {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--vt-color-primary);
+}
+
+.log-level-chip.lv-warn {
+  background: rgba(217, 119, 6, 0.18);
+  color: var(--vt-color-warning);
+}
+
+.log-level-chip.lv-error {
+  background: rgba(220, 38, 38, 0.15);
+  color: var(--vt-color-error);
+}
+
 .log-time-range {
   display: flex;
   align-items: center;
@@ -354,12 +412,32 @@ async function onExport() {
 }
 
 .log-list {
-  max-height: 480px;
+  flex: 1;
+  min-height: 240px;
   overflow-y: auto;
   padding: 8px 0;
   font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
   font-size: 12px;
   line-height: 1.7;
+}
+
+/* 日志面板纵向填充：页面撑满内容区，搜索卡片与列表分占剩余高度 */
+.log-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.log-search-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.log-search-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .log-empty {
