@@ -56,22 +56,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 同步版本号到工程文件
+      - name: 同步版本号到工程文件（跨平台脚本，避免 sed/shell 方言差异）
+        shell: bash
         run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          python3 - "$VERSION" <<'EOF'
-          import json, sys, pathlib
-          version = sys.argv[1]
-          pkg = pathlib.Path("package.json")
-          data = json.loads(pkg.read_text(encoding="utf-8"))
-          data["version"] = version
-          pkg.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-          conf = pathlib.Path("src-tauri/tauri.conf.json")
-          tauri = json.loads(conf.read_text(encoding="utf-8"))
-          tauri["version"] = version
-          conf.write_text(json.dumps(tauri, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-          EOF
-          sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+          python3 .github/scripts/sync-version.py "${{ needs.validate.outputs.version }}" \
+            || python .github/scripts/sync-version.py "${{ needs.validate.outputs.version }}"
 
       - uses: pnpm/action-setup@v4
         with:
