@@ -9,6 +9,10 @@ import re
 import sys
 from pathlib import Path
 
+# Windows 控制台默认非 UTF-8 编码，打印中文会抛 UnicodeEncodeError
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 version = sys.argv[1]
 if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-.]+)?(\+[0-9A-Za-z-.]+)?", version):
     sys.exit(f"版本号不符合语义化规范: {version}")
