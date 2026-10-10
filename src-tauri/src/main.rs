@@ -1,3 +1,7 @@
+// 发布版不分配控制台窗口（Windows：消除启动时附带的黑底命令行界面，
+// 该窗口关闭会连带终止进程）；调试版保留控制台便于观察日志。
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 //! VibeType 桌面端入口（tech/04 4.1）：初始化日志、Tauri Builder、插件与命令注册。
 //!
 //! 模块实现在库目标（lib.rs），集成测试经库目标复用服务层。
