@@ -413,7 +413,7 @@ async function onExport() {
 
 .log-list {
   flex: 1;
-  min-height: 240px;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px 0;
   font-family: 'SF Mono', 'Cascadia Mono', Consolas, monospace;
@@ -421,23 +421,32 @@ async function onExport() {
   line-height: 1.7;
 }
 
-/* 日志面板纵向填充：页面撑满内容区，搜索卡片与列表分占剩余高度 */
+/* 日志面板纵向填充：页面精确撑满内容区（height 而非 min-height，避免
+   分组边距把页面顶出滚动区），滚动只发生在 .log-list 自身。 */
 .log-page {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  height: 100%;
+  gap: var(--vt-spacing-lg);
+}
+
+.log-page > .settings-group {
+  margin-bottom: 0;
 }
 
 .log-search-group {
   flex: 1;
+  min-height: 0;
+}
+
+.log-search-card {
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.log-search-card {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+.log-search-bar {
+  flex-shrink: 0;
 }
 
 .log-empty {

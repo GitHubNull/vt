@@ -63,9 +63,6 @@ export const enUS: Messages = {
       profile: 'Profile',
       backup: 'Backup & Restore',
     },
-    log: {
-      viewer: 'Log Viewer',
-    },
   },
   common: {
     open: 'Open',

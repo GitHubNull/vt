@@ -180,18 +180,14 @@ export const routes: RouteRecordRaw[] = [
     meta: { navModule: { key: 'faq', icon: 'pi pi-question-circle', order: 7 } },
   },
   {
+    // 日志模块无二级分组（单一“日志查看”页，2026-10-10 用户反馈），平铺为无子路由模块。
     path: '/log',
+    name: 'log',
+    component: () => import('./views/log/LogView.vue'),
     meta: { navModule: { key: 'log', icon: 'pi pi-list', order: 8 } },
-    children: [
-      { path: '', redirect: '/log/viewer' },
-      {
-        path: 'viewer',
-        name: 'log-viewer',
-        component: () => import('./views/log/LogView.vue'),
-        meta: { navChild: { titleKey: 'navChildren.log.viewer' } },
-      },
-    ],
   },
+  // 旧版 /log/viewer 路径兼容（v0.1.3 ~ v0.1.8 曾作为子路由）。
+  { path: '/log/viewer', redirect: '/log' },
   {
     path: '/about',
     name: 'about',

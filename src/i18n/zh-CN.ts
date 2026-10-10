@@ -61,9 +61,6 @@ export const zhCN = {
       profile: '个人档案',
       backup: '数据备份与恢复',
     },
-    log: {
-      viewer: '日志查看',
-    },
   },
   common: {
     open: '打开',
