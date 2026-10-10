@@ -40,7 +40,7 @@ const exporting = ref(false)
 const exportMessage = ref(null) // { ok, text }
 
 /** 法律文本对话框。 */
-const legalDialog = ref({ visible: false, title: '', text: '' })
+const legalDialog = ref({ visible: false, title: '', text: '', markdown: false })
 const legalLoading = ref(false)
 
 onMounted(() => {
@@ -144,7 +144,7 @@ async function onExportLogs() {
 
 async function openLegal(document, title) {
   legalLoading.value = true
-  legalDialog.value = { visible: true, title, text: '' }
+  legalDialog.value = { visible: true, title, text: '', markdown: document === 'disclaimer' }
   try {
     legalDialog.value.text = await getLegalText(document)
   } catch (error) {
@@ -307,6 +307,7 @@ const errorText = computed(() =>
       v-model:visible="legalDialog.visible"
       :title="legalDialog.title"
       :text="legalDialog.text"
+      :markdown="legalDialog.markdown"
     />
 
     <Message v-if="store.lastError" severity="error" class="settings-error">{{ errorText }}</Message>
