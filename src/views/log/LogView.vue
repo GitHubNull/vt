@@ -160,62 +160,67 @@ async function onExport() {
           {{ t.log.search.dbDisabled }}
         </Message>
         <div v-else class="log-search-bar">
-          <InputText
-            v-model="store.keyword"
-            class="log-keyword"
-            :placeholder="t.log.search.keywordPlaceholder"
-            :aria-label="t.log.search.keywordPlaceholder"
-            @keyup.enter="store.search()"
-          />
-          <div class="log-toggles">
-            <label class="log-toggle">
-              <ToggleSwitch v-model="store.regex" :aria-label="t.log.search.regex" />
-              <span>{{ t.log.search.regex }}</span>
-            </label>
-            <label class="log-toggle">
-              <ToggleSwitch v-model="store.caseSensitive" :aria-label="t.log.search.caseSensitive" />
-              <span>{{ t.log.search.caseSensitive }}</span>
-            </label>
-          </div>
-          <MultiSelect
-            v-model="store.levels"
-            :options="LEVEL_OPTIONS"
-            class="log-levels"
-            :placeholder="t.log.search.levels"
-            :aria-label="t.log.search.levels"
-          />
-          <div class="log-time-range">
-            <input
-              v-model="store.fromLocal"
-              type="datetime-local"
-              class="log-time-input"
-              :aria-label="t.log.search.from"
+          <div class="log-search-row">
+            <InputText
+              v-model="store.keyword"
+              class="log-keyword"
+              :placeholder="t.log.search.keywordPlaceholder"
+              :aria-label="t.log.search.keywordPlaceholder"
+              @keyup.enter="store.search()"
             />
-            <span class="log-time-sep">—</span>
-            <input
-              v-model="store.toLocal"
-              type="datetime-local"
-              class="log-time-input"
-              :aria-label="t.log.search.to"
+            <div class="log-toggles">
+              <label class="log-toggle">
+                <ToggleSwitch v-model="store.regex" :aria-label="t.log.search.regex" />
+                <span>{{ t.log.search.regex }}</span>
+              </label>
+              <label class="log-toggle">
+                <ToggleSwitch v-model="store.caseSensitive" :aria-label="t.log.search.caseSensitive" />
+                <span>{{ t.log.search.caseSensitive }}</span>
+              </label>
+            </div>
+            <Button
+              type="button"
+              icon="pi pi-search"
+              :label="store.loading ? t.log.search.loading : t.log.search.query"
+              :loading="store.loading"
+              :disabled="searchDisabled && !store.loading"
+              @click="store.search()"
+            />
+            <Button
+              type="button"
+              icon="pi pi-download"
+              :label="exporting ? t.log.search.exporting : t.log.search.export"
+              :loading="exporting"
+              :disabled="!store.dbEnabled || exporting"
+              severity="secondary"
+              @click="onExport"
             />
           </div>
-          <Button
-            type="button"
-            icon="pi pi-search"
-            :label="store.loading ? t.log.search.loading : t.log.search.query"
-            :loading="store.loading"
-            :disabled="searchDisabled && !store.loading"
-            @click="store.search()"
-          />
-          <Button
-            type="button"
-            icon="pi pi-download"
-            :label="exporting ? t.log.search.exporting : t.log.search.export"
-            :loading="exporting"
-            :disabled="!store.dbEnabled || exporting"
-            severity="secondary"
-            @click="onExport"
-          />
+          <div class="log-search-row">
+            <span class="log-filter-label">{{ t.log.search.levels }}</span>
+            <MultiSelect
+              v-model="store.levels"
+              :options="LEVEL_OPTIONS"
+              class="log-levels"
+              :aria-label="t.log.search.levels"
+            />
+            <span class="log-filter-label">{{ t.log.search.from }} — {{ t.log.search.to }}</span>
+            <div class="log-time-range">
+              <input
+                v-model="store.fromLocal"
+                type="datetime-local"
+                class="log-time-input"
+                :aria-label="t.log.search.from"
+              />
+              <span class="log-time-sep">—</span>
+              <input
+                v-model="store.toLocal"
+                type="datetime-local"
+                class="log-time-input"
+                :aria-label="t.log.search.to"
+              />
+            </div>
+          </div>
         </div>
         <p v-if="store.searchHint === 'invalid_regex'" class="log-hint log-hint-error">
           {{ t.log.search.invalidRegex }}
@@ -274,15 +279,29 @@ async function onExport() {
 
 .log-search-bar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--vt-spacing-sm);
+  flex-direction: column;
+  gap: 10px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--vt-color-border);
 }
 
+.log-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--vt-spacing-sm);
+}
+
 .log-keyword {
-  width: 240px;
+  flex: 1;
+  min-width: 220px;
+}
+
+.log-filter-label {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  color: var(--vt-color-text-muted);
+  white-space: nowrap;
 }
 
 .log-toggles {
