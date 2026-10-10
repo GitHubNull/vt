@@ -6,7 +6,6 @@ export const LINKS = {
   official: 'https://vibetype.example.com/',
   repository: 'https://github.com/vibetype/vibetype',
   releases: 'https://github.com/vibetype/vibetype/releases',
-  privacy: 'https://vibetype.example.com/privacy',
 } as const
 
 /** “跳过此版本”的本地存储键（about 配置节暂无该字段，v0.1 前端本地保存）。 */

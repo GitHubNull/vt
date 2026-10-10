@@ -142,9 +142,9 @@ async function onExportLogs() {
   }
 }
 
-async function openLegal(document, title) {
+async function openLegal(document, title, markdown = false) {
   legalLoading.value = true
-  legalDialog.value = { visible: true, title, text: '', markdown: document === 'disclaimer' }
+  legalDialog.value = { visible: true, title, text: '', markdown }
   try {
     legalDialog.value.text = await getLegalText(document)
   } catch (error) {
@@ -159,7 +159,8 @@ async function openLegal(document, title) {
 const legalItems = computed(() => [
   { key: 'license', label: t.about.legal.license },
   { key: 'third_party', label: t.about.legal.thirdParty },
-  { key: 'disclaimer', label: t.about.legal.disclaimer },
+  { key: 'disclaimer', label: t.about.legal.disclaimer, markdown: true },
+  { key: 'privacy', label: t.about.legal.privacy, markdown: true },
 ])
 
 const versionText = computed(() =>
@@ -289,15 +290,7 @@ const errorText = computed(() =>
             :label="t.common.open"
             severity="link"
             :loading="legalLoading && legalDialog.title === item.label"
-            @click="openLegal(item.key, item.label)"
-          />
-        </SettingsRow>
-        <SettingsRow :title="t.about.legal.privacy">
-          <Button
-            type="button"
-            :label="t.common.open"
-            severity="link"
-            @click="openExternal(LINKS.privacy)"
+            @click="openLegal(item.key, item.label, item.markdown)"
           />
         </SettingsRow>
       </div>

@@ -155,7 +155,7 @@ export interface ExportLogsResult {
   lines: number
 }
 
-export type LegalDocument = 'license' | 'disclaimer' | 'third_party'
+export type LegalDocument = 'license' | 'disclaimer' | 'privacy' | 'third_party'
 
 /* ---- 日志中心（T-018 命令契约，后端 services/log.rs） ---- */
 
