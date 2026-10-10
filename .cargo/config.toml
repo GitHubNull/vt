@@ -1,0 +1,5 @@
+# Windows 链接补充：sherpa-onnx 官方 win-x64 静态库引用 ETW（EventWriteTransfer 等）
+# 与注册表（RegOpenKeyExA 等）符号，sherpa-rs-sys 的 build.rs 不会代发 advapi32 链接指令，
+# 需在此显式补齐（仅影响 Windows 目标的链接行）。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-l", "advapi32"]
