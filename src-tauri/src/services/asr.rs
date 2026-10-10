@@ -843,6 +843,9 @@ impl AsrService {
     }
 
     /// 镜像源：逐文件直传下载（免解包），进度累计进共享计数器。
+    ///
+    /// 下载前先预探测各文件大小并写入 total_known——否则大文件下载期间
+    /// total 为 0，前端百分比与剩余时间无法计算（进度条卡在 0%）。
     async fn fetch_mirror(
         &self,
         meta: &ModelMeta,
@@ -851,8 +854,23 @@ impl AsrService {
         downloaded: &Arc<AtomicU64>,
         total_known: &Arc<AtomicU64>,
     ) -> Result<u64, AppError> {
+        let files = model_download::mirror_files(meta);
+        let mut expected_sum = 0u64;
+        for file in &files {
+            let expected = if file.dest_name == MODEL_ONNX_NAME {
+                meta.size_bytes
+            } else {
+                0
+            };
+            expected_sum += model_download::probe_size(client, &file.url)
+                .await
+                .unwrap_or(expected)
+                .max(expected);
+        }
+        total_known.store(expected_sum, Ordering::Relaxed);
+
         let mut sum = 0u64;
-        for file in model_download::mirror_files(meta) {
+        for file in files {
             let expected = if file.dest_name == MODEL_ONNX_NAME {
                 meta.size_bytes
             } else {
@@ -883,6 +901,12 @@ impl AsrService {
         total_known: &Arc<AtomicU64>,
     ) -> Result<u64, AppError> {
         let archive_path = tmp_dir.join("archive.tar.bz2");
+        // 下载前预探测归档大小写入 total_known（原因同 fetch_mirror）。
+        let probed = model_download::probe_size(client, meta.url).await;
+        total_known.store(
+            probed.unwrap_or(meta.size_bytes).max(meta.size_bytes),
+            Ordering::Relaxed,
+        );
         let total = model_download::download_file(
             client,
             meta.url,

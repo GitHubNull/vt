@@ -120,7 +120,7 @@ pub fn build_client(proxy: Option<&str>) -> Result<reqwest::Client, AppError> {
 }
 
 /// 探测远端文件大小：优先 HEAD，被拒不支持时退回 1 字节 Range 探针读 Content-Range。
-async fn probe_size(client: &reqwest::Client, url: &str) -> Option<u64> {
+pub(crate) async fn probe_size(client: &reqwest::Client, url: &str) -> Option<u64> {
     if let Ok(resp) = client.head(url).send().await {
         let len = resp
             .headers()
