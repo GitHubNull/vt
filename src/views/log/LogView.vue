@@ -79,6 +79,11 @@ async function toggleTarget(target, enabled) {
 
 const searchDisabled = computed(() => !store.dbEnabled || store.loading)
 
+/** 清除关键词：置空即触发防抖自动重新查询。 */
+function clearKeyword() {
+  store.keyword = ''
+}
+
 const errorText = computed(() =>
   store.lastError ? `${store.lastError.message}（${t.common.errorCode} ${store.lastError.code}）` : '',
 )
@@ -161,13 +166,25 @@ async function onExport() {
         </Message>
         <div v-else class="log-search-bar">
           <div class="log-search-row">
-            <InputText
-              v-model="store.keyword"
-              class="log-keyword"
-              :placeholder="t.log.search.keywordPlaceholder"
-              :aria-label="t.log.search.keywordPlaceholder"
-              @keyup.enter="store.search()"
-            />
+            <div class="log-keyword-wrap">
+              <InputText
+                v-model="store.keyword"
+                class="log-keyword"
+                :placeholder="t.log.search.keywordPlaceholder"
+                :aria-label="t.log.search.keywordPlaceholder"
+                @keyup.enter="store.search()"
+              />
+              <button
+                v-if="store.keyword"
+                type="button"
+                class="log-keyword-clear"
+                :aria-label="t.common.clear"
+                :title="t.common.clear"
+                @click="clearKeyword"
+              >
+                <i class="pi pi-times" aria-hidden="true" />
+              </button>
+            </div>
             <div class="log-toggles">
               <label class="log-toggle">
                 <ToggleSwitch v-model="store.regex" :aria-label="t.log.search.regex" />
@@ -299,9 +316,40 @@ async function onExport() {
   gap: var(--vt-spacing-sm);
 }
 
-.log-keyword {
+.log-keyword-wrap {
+  position: relative;
   flex: 1;
   min-width: 220px;
+}
+
+.log-keyword {
+  width: 100%;
+  padding-right: 30px;
+}
+
+/* 清除图标：输入框内部右侧，无文本时不渲染（v-if） */
+.log-keyword-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--vt-color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.log-keyword-clear:hover {
+  background: var(--vt-color-nav-active-bg);
+  color: var(--vt-color-text);
 }
 
 .log-filter-label {

@@ -68,6 +68,7 @@ export const zhCN = {
     cancel: '取消',
     confirm: '确定',
     retry: '重试',
+    clear: '清除',
     errorCode: '错误编号',
     v1Coming: 'v1.0 提供',
     loadFailed: '加载失败',

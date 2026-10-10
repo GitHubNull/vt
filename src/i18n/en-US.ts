@@ -70,6 +70,7 @@ export const enUS: Messages = {
     cancel: 'Cancel',
     confirm: 'OK',
     retry: 'Retry',
+    clear: 'Clear',
     errorCode: 'Error code',
     v1Coming: 'Available in v1.0',
     loadFailed: 'Failed to load',
