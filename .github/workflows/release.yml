@@ -87,6 +87,22 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install -y ninja
 
+      - name: Windows 预置 sherpa-onnx 1.12.9 官方静态库
+        # 源码路径在 Windows 上不可行：sherpa-onnx 强制启用 Fortran（kaldi-decoder → eigen blas），
+        # 混链 MSVC C/CXX + MinGW gfortran 时 CMake 把 MSVC 的 /machine:x64 注入全局链接标志，
+        # gfortran 链接必然失败（Kitware CMake issue #17810）。
+        # 改用 sherpa-rs 官方支持的 SHERPA_LIB_PATH 预编译静态库（sha256 登记于 crate 的 checksum.txt）。
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.9/sherpa-onnx-v1.12.9-win-x64-static.tar.bz2"
+          $expected = "4f3ada021afc97497f7570db622370a43c9b44d47d3dfb649aa0a7133a7afe58"
+          curl.exe -sSL --retry 5 --retry-all-errors -o sherpa-win.tar.bz2 $url
+          $actual = (Get-FileHash sherpa-win.tar.bz2 -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $expected) { throw "sherpa-onnx 静态库校验和不符：$actual" }
+          tar -xjf sherpa-win.tar.bz2
+          "SHERPA_LIB_PATH=$PWD\sherpa-onnx-v1.12.9-win-x64-static" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+
       - name: Linux 系统依赖（GTK/WebKit/ALSA/libclang/cmake/AppIndicator——sherpa-onnx 静态编译与托盘打包所需）
         if: runner.os == 'Linux'
         run: |
