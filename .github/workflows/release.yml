@@ -77,6 +77,12 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Windows 固定 CMake 3.x（sherpa-onnx 1.12.x 的 show-info.cmake 与 CMake 4.x 不兼容）
+        if: runner.os == 'Windows'
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: "3.31.6"
+
       - name: Linux 系统依赖（GTK/WebKit/ALSA/libclang/cmake/AppIndicator——sherpa-onnx 静态编译与托盘打包所需）
         if: runner.os == 'Linux'
         run: |
