@@ -9,8 +9,18 @@ import {
   type RouteRecordRaw,
 } from 'vue-router'
 
-/** 一级导航模块（PRD 2.2 顺序，编程置于首位；不含已移除的“音视频转录”）。 */
-export const NAV_ORDER = ['coding', 'dict', 'ai', 'general', 'me', 'stats', 'faq', 'about'] as const
+/** 一级导航模块（PRD 2.2 顺序 + v1.6 新增“日志”，编程置于首位；不含已移除的“音视频转录”）。 */
+export const NAV_ORDER = [
+  'coding',
+  'dict',
+  'ai',
+  'general',
+  'me',
+  'stats',
+  'faq',
+  'log',
+  'about',
+] as const
 export type NavModuleKey = (typeof NAV_ORDER)[number]
 
 declare module 'vue-router' {
@@ -170,10 +180,23 @@ export const routes: RouteRecordRaw[] = [
     meta: { navModule: { key: 'faq', icon: 'pi pi-question-circle', order: 7 } },
   },
   {
+    path: '/log',
+    meta: { navModule: { key: 'log', icon: 'pi pi-list', order: 8 } },
+    children: [
+      { path: '', redirect: '/log/viewer' },
+      {
+        path: 'viewer',
+        name: 'log-viewer',
+        component: () => import('./views/log/LogView.vue'),
+        meta: { navChild: { titleKey: 'navChildren.log.viewer' } },
+      },
+    ],
+  },
+  {
     path: '/about',
     name: 'about',
     component: () => import('./views/about/AboutView.vue'),
-    meta: { navModule: { key: 'about', icon: 'pi pi-info-circle', order: 8 } },
+    meta: { navModule: { key: 'about', icon: 'pi pi-info-circle', order: 9 } },
   },
   { path: '/:pathMatch(.*)*', redirect: '/general/interface' },
 ]

@@ -60,6 +60,7 @@ export function defaultConfig(): AppConfig {
       model_source: 'mirror',
     },
     about: { auto_check_update: true },
+    log: { targets: ['file', 'database'] },
   }
 }
 

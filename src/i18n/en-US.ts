@@ -25,6 +25,7 @@ export const enUS: Messages = {
     me: 'Me',
     stats: 'Stats',
     faq: 'FAQ',
+    log: 'Logs',
     about: 'About',
   },
   navSubtitle: {
@@ -33,6 +34,7 @@ export const enUS: Messages = {
     ai: 'Prompt templates, MCP services and AI providers',
     general: 'Interface, recording and text output settings',
     me: 'Profile and data backup',
+    log: 'View, search and export app logs',
   },
   navChildren: {
     coding: {
@@ -60,6 +62,9 @@ export const enUS: Messages = {
     me: {
       profile: 'Profile',
       backup: 'Backup & Restore',
+    },
+    log: {
+      viewer: 'Log Viewer',
     },
   },
   common: {
@@ -304,6 +309,43 @@ export const enUS: Messages = {
       deleteMark: 'Delete this word',
       deleteTitle: 'Delete Rule',
       deleteConfirm: 'Delete rule "{wrong}"?',
+    },
+  },
+  log: {
+    title: 'Log Viewer',
+    desc: 'View, search and export app logs to troubleshoot issues.',
+    targets: {
+      group: 'Log Destinations',
+      file: {
+        label: 'Log to text file',
+        desc: 'Rolling daily files in the log directory, kept for 7 days.',
+      },
+      database: {
+        label: 'Log to local database',
+        desc: 'Writes to a local SQLite database powering in-app search and export.',
+      },
+      needOne: 'Keep at least one log destination.',
+    },
+    search: {
+      group: 'Search & Filter',
+      keywordPlaceholder: 'Enter keyword or regular expression',
+      regex: 'Regular expression',
+      caseSensitive: 'Case sensitive',
+      levels: 'Levels',
+      from: 'Start time',
+      to: 'End time',
+      query: 'Search',
+      loading: 'Searching…',
+      loadMore: 'Load more',
+      empty: 'No matching log entries.',
+      dbDisabled:
+        'Database logging is disabled, so search is unavailable. Enable "Log to local database" above.',
+      invalidRegex: 'Invalid regular expression, please check and retry.',
+      export: 'Export Search Results',
+      exporting: 'Exporting…',
+      exportDone: 'Exported matching logs: ',
+      exportFailed: 'Export failed',
+      saveTitle: 'Export Search Results',
     },
   },
   about: {

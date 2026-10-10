@@ -23,6 +23,7 @@ export const zhCN = {
     me: '我的',
     stats: '统计',
     faq: '常见问题',
+    log: '日志',
     about: '关于',
   },
   navSubtitle: {
@@ -31,6 +32,7 @@ export const zhCN = {
     ai: '提示词模板、MCP 服务与 AI 供应商',
     general: '界面、录音与文本输出设置',
     me: '个人档案与数据备份',
+    log: '查看、搜索与导出应用日志',
   },
   navChildren: {
     coding: {
@@ -58,6 +60,9 @@ export const zhCN = {
     me: {
       profile: '个人档案',
       backup: '数据备份与恢复',
+    },
+    log: {
+      viewer: '日志查看',
     },
   },
   common: {
@@ -302,6 +307,42 @@ export const zhCN = {
       deleteMark: '删除该词',
       deleteTitle: '删除规则',
       deleteConfirm: '确定删除规则“{wrong}”吗？',
+    },
+  },
+  log: {
+    title: '日志查看',
+    desc: '查看、搜索与导出应用日志，辅助问题排查。',
+    targets: {
+      group: '记录目标',
+      file: {
+        label: '记录到文本文件',
+        desc: '按天滚动保存到日志目录，保留 7 天。',
+      },
+      database: {
+        label: '记录到本地数据库',
+        desc: '写入本地 SQLite，支撑应用内搜索与按条件导出。',
+      },
+      needOne: '至少保留一种日志记录方式。',
+    },
+    search: {
+      group: '搜索与过滤',
+      keywordPlaceholder: '输入关键词或正则表达式',
+      regex: '正则表达式',
+      caseSensitive: '大小写敏感',
+      levels: '级别',
+      from: '开始时间',
+      to: '结束时间',
+      query: '查询',
+      loading: '查询中…',
+      loadMore: '加载更多',
+      empty: '没有匹配的日志。',
+      dbDisabled: '当前未启用数据库日志记录，搜索不可用。请在上方开启“记录到本地数据库”。',
+      invalidRegex: '正则表达式无效，请检查后重试。',
+      export: '导出搜索结果',
+      exporting: '导出中…',
+      exportDone: '已导出匹配日志 ',
+      exportFailed: '导出失败',
+      saveTitle: '导出搜索结果',
     },
   },
   about: {

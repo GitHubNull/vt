@@ -40,6 +40,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # 按天滚动日志所需（tracing-subscriber 官方配套 crate；tech/02 未单列，T-001 登记补充）
 tracing-appender = "0.2"
+# 日志数据库目标（tech/02 2.3；T-018 登记：F-LOG-02，bundled 自带 sqlite3 源码，
+# Windows 交叉编译无系统库依赖）
+rusqlite = { version = "0.32", features = ["bundled"] }
+# 日志搜索正则匹配（tech/02 2.3；T-018 登记：F-LOG-01，SQLite 无内置正则，消费侧过滤）
+regex = "1"
 # 实时通信与设备连接（tech/02 2.3，T-001 预置登记，后续任务使用）
 tokio-tungstenite = "0.24"
 futures-util = "0.3"

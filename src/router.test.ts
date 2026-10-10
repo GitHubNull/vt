@@ -13,6 +13,7 @@ describe('路由表与导航元信息一致性（T-002）', () => {
       'me',
       'stats',
       'faq',
+      'log',
       'about',
     ])
     expect(modules.map((m) => m.key)).not.toContain('transcription')

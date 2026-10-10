@@ -121,10 +121,22 @@ exports[`路由表与导航元信息一致性（T-002） > 导航元信息快照
     "path": "/faq",
   },
   {
+    "children": [
+      {
+        "path": "/log/viewer",
+        "titleKey": "navChildren.log.viewer",
+      },
+    ],
+    "icon": "pi pi-list",
+    "key": "log",
+    "order": 8,
+    "path": "/log/viewer",
+  },
+  {
     "children": [],
     "icon": "pi pi-info-circle",
     "key": "about",
-    "order": 8,
+    "order": 9,
     "path": "/about",
   },
 ]

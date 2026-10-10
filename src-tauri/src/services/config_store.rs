@@ -34,6 +34,7 @@ pub enum ConfigSection {
     Dict,
     Asr,
     About,
+    Log,
 }
 
 impl ConfigSection {
@@ -47,6 +48,7 @@ impl ConfigSection {
             "dict" => Some(Self::Dict),
             "asr" => Some(Self::Asr),
             "about" => Some(Self::About),
+            "log" => Some(Self::Log),
             _ => None,
         }
     }
@@ -270,6 +272,32 @@ impl Default for AboutConfig {
     }
 }
 
+/// 日志记录目标（F-LOG-02）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogTarget {
+    /// 按天滚动文本文件。
+    File,
+    /// 本地 SQLite 数据库（支撑应用内搜索）。
+    Database,
+}
+
+/// 日志设置（F-LOG-02：记录目标，至少一项，默认文本 + 数据库全开）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LogConfig {
+    /// 启用的记录目标（全空非法：apply 拒绝并提示至少保留一项）。
+    pub targets: Vec<LogTarget>,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            targets: vec![LogTarget::File, LogTarget::Database],
+        }
+    }
+}
+
 /// 应用配置根（按节分模块；各节带 `#[serde(default)]` 保证升级新增字段不破坏旧配置，
 /// 即 NFR-R-06"升级保留配置"的读取侧保证）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -282,6 +310,7 @@ pub struct AppConfig {
     pub dict: DictConfig,
     pub asr: AsrConfig,
     pub about: AboutConfig,
+    pub log: LogConfig,
 }
 
 /// 配置持久化错误编号（用户可见提示中的稳定编号）。
@@ -307,7 +336,7 @@ impl ConfigStore {
     ) -> Result<Self, AppError> {
         let path = config_dir.join(CONFIG_FILE_NAME);
         let mut recovered = None;
-        let config = match fs::read_to_string(&path) {
+        let mut config = match fs::read_to_string(&path) {
             Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
                 Ok(config) => {
                     info!("配置加载成功");
@@ -337,6 +366,10 @@ impl ConfigStore {
                 return Err(AppError::Config(ERR_IO, format!("读取配置文件失败: {err}")));
             }
         };
+        // F-LOG-02：手工编辑成空的记录目标按默认（双开）归一化，与 apply 校验口径一致。
+        if config.log.targets.is_empty() {
+            config.log = LogConfig::default();
+        }
 
         let store = Self {
             path: Arc::new(path),
@@ -430,6 +463,17 @@ impl ConfigStore {
             }
             ConfigSection::About => {
                 config.about = serde_json::from_value(value).map_err(apply_err)?;
+            }
+            ConfigSection::Log => {
+                let log: LogConfig = serde_json::from_value(value).map_err(apply_err)?;
+                // F-LOG-02：至少保留一种记录方式，全空直接拒绝。
+                if log.targets.is_empty() {
+                    return Err(AppError::Config(
+                        ERR_BAD_VALUE,
+                        "至少选择一种日志记录方式（文本文件或数据库）".to_string(),
+                    ));
+                }
+                config.log = log;
             }
         }
         Ok(())
@@ -542,6 +586,7 @@ mod tests {
             ConfigSection::Dict => serde_json::to_value(&config.dict).unwrap(),
             ConfigSection::Asr => serde_json::to_value(&config.asr).unwrap(),
             ConfigSection::About => serde_json::to_value(&config.about).unwrap(),
+            ConfigSection::Log => serde_json::to_value(&config.log).unwrap(),
         }
     }
 
@@ -573,6 +618,48 @@ mod tests {
         // 重新加载得到新值（持久化生效）。
         let (store2, _rx) = test_store(&dir);
         assert_eq!(store2.get().await.hotkey.max_recording_minutes, 10);
+    }
+
+    #[tokio::test]
+    async fn log_targets_default_both_and_reject_empty() {
+        let dir = TestDir::new("log-targets");
+        let (store, _rx) = test_store(&dir);
+        // 默认：文本 + 数据库全开（F-LOG-02）。
+        assert_eq!(
+            store.get().await.log.targets,
+            vec![LogTarget::File, LogTarget::Database]
+        );
+        // 允许只留一项。
+        let mut value = section_value(&store, ConfigSection::Log).await;
+        value["targets"] = serde_json::json!(["file"]);
+        store.set_section(ConfigSection::Log, value).await.unwrap();
+        assert_eq!(store.get().await.log.targets, vec![LogTarget::File]);
+        // 全空拒绝（E-CONFIG-004），镜像保持不变。
+        let mut value = section_value(&store, ConfigSection::Log).await;
+        value["targets"] = serde_json::json!([]);
+        let err = store
+            .set_section(ConfigSection::Log, value)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "E-CONFIG-004");
+        assert_eq!(store.get().await.log.targets, vec![LogTarget::File]);
+        // 手工编辑成空：加载归一化为默认。
+        drop(store);
+        let mut config: AppConfig = {
+            let raw = fs::read_to_string(dir.path().join(CONFIG_FILE_NAME)).unwrap();
+            serde_json::from_str(&raw).unwrap()
+        };
+        config.log.targets = Vec::new();
+        fs::write(
+            dir.path().join(CONFIG_FILE_NAME),
+            serde_json::to_string(&config).unwrap(),
+        )
+        .unwrap();
+        let (store2, _rx) = test_store(&dir);
+        assert_eq!(
+            store2.get().await.log.targets,
+            vec![LogTarget::File, LogTarget::Database]
+        );
     }
 
     #[tokio::test]

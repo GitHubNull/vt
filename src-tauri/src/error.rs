@@ -9,6 +9,7 @@
 //! - `E-NET-xxx`     网络错误
 //! - `E-PERM-xxx`    权限错误
 //! - `E-PLAT-xxx`    平台适配层错误
+//! - `E-LOG-xxx`     日志查询 / 搜索导出错误（T-018）
 
 use serde::Serialize;
 
@@ -33,6 +34,8 @@ pub enum AppError {
     Permission(u32, String),
     #[error("[E-PLAT-{0:03}] {1}")]
     Platform(u32, String),
+    #[error("[E-LOG-{0:03}] {1}")]
+    Log(u32, String),
 }
 
 impl AppError {
@@ -47,6 +50,7 @@ impl AppError {
             Self::Network(n, _) => format!("E-NET-{n:03}"),
             Self::Permission(n, _) => format!("E-PERM-{n:03}"),
             Self::Platform(n, _) => format!("E-PLAT-{n:03}"),
+            Self::Log(n, _) => format!("E-LOG-{n:03}"),
         }
     }
 
@@ -60,7 +64,8 @@ impl AppError {
             | Self::Config(_, m)
             | Self::Network(_, m)
             | Self::Permission(_, m)
-            | Self::Platform(_, m) => m,
+            | Self::Platform(_, m)
+            | Self::Log(_, m) => m,
         }
     }
 }

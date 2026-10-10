@@ -99,6 +99,14 @@ export interface AboutConfig {
   auto_check_update: boolean
 }
 
+/** 日志记录目标（F-LOG-02）。 */
+export type LogTargetOption = 'file' | 'database'
+
+/** 日志设置（F-LOG-02：至少一项，默认文本 + 数据库全开）。 */
+export interface LogConfig {
+  targets: LogTargetOption[]
+}
+
 /** 应用配置根（get_config 返回完整镜像）。 */
 export interface AppConfig {
   general: GeneralConfig
@@ -108,6 +116,7 @@ export interface AppConfig {
   dict: DictConfig
   asr: AsrConfig
   about: AboutConfig
+  log: LogConfig
 }
 
 export type ConfigSection = keyof AppConfig
@@ -147,6 +156,43 @@ export interface ExportLogsResult {
 }
 
 export type LegalDocument = 'license' | 'disclaimer' | 'third_party'
+
+/* ---- 日志中心（T-018 命令契约，后端 services/log.rs） ---- */
+
+/** log_query / log_export 查询条件（后端 LogQuery 序列化形态）。 */
+export interface LogQuery {
+  /** 关键词或正则（空 = 不过滤）。 */
+  keyword: string | null
+  /** 关键词按正则解释（默认 false = 关键词匹配）。 */
+  regex: boolean
+  /** 大小写敏感（默认 false）。 */
+  case_sensitive: boolean
+  /** 级别过滤（空数组 = 全部级别）。 */
+  levels: string[]
+  /** 起始时间（Unix 毫秒，闭区间）。 */
+  from_millis: number | null
+  /** 结束时间（Unix 毫秒，闭区间）。 */
+  to_millis: number | null
+  /** 单页条数（0 = 后端默认 200，最大 200）。 */
+  limit: number
+  /** 跳过前 offset 条匹配结果。 */
+  offset: number
+}
+
+/** 日志条目（后端 LogEntry 序列化形态）。 */
+export interface LogEntry {
+  id: number
+  ts_millis: number
+  level: string
+  target: string
+  body: string
+}
+
+/** 查询结果页（后端 LogPage 序列化形态）。 */
+export interface LogPage {
+  entries: LogEntry[]
+  has_more: boolean
+}
 
 /* ---- 事件载荷（tech/03 3.5；与 events.rs AppEvent 序列化形态同步） ---- */
 

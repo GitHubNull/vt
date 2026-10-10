@@ -10,5 +10,6 @@ pub mod config;
 pub mod dict;
 pub mod hotkey;
 pub mod inject;
+pub mod log;
 pub mod system;
 pub mod window;

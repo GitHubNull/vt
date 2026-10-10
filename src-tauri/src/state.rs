@@ -10,6 +10,7 @@ use crate::services::config_store::ConfigStore;
 use crate::services::dict::DictService;
 use crate::services::hotkey::RecordCommand;
 use crate::services::inject::InjectService;
+use crate::services::log::LogStore;
 use crate::services::pipeline::PipelineService;
 use crate::services::post_process::PostProcess;
 
@@ -33,6 +34,8 @@ pub struct AppState {
     pub post_process: Arc<PostProcess>,
     /// 链路编排（T-012）：管线出口 → 上屏 → 统一结果反馈 + 耗时埋点。
     pub pipeline: Arc<PipelineService>,
+    /// 日志服务句柄（T-018）：查询 / 搜索导出 / 记录目标热更新。
+    pub log: LogStore,
 }
 
 impl AppState {
@@ -47,6 +50,7 @@ impl AppState {
         dict: DictService,
         post_process: Arc<PostProcess>,
         pipeline: Arc<PipelineService>,
+        log: LogStore,
     ) -> Self {
         Self {
             config,
@@ -57,6 +61,7 @@ impl AppState {
             dict,
             post_process,
             pipeline,
+            log,
         }
     }
 }

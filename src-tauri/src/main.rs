@@ -12,7 +12,6 @@
 use std::path::Path;
 
 use tauri::{Emitter, Manager};
-use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 use vibetype::services;
@@ -40,8 +39,9 @@ fn main() {
             }
         })
         .setup(move |app| {
-            init_logging(app)?;
-            let state = tauri::async_runtime::block_on(init_services(app, process_start))?;
+            let log_store = init_logging(app)?;
+            let state =
+                tauri::async_runtime::block_on(init_services(app, process_start, log_store))?;
             app.manage(state);
             // 窗口必须在 manage(state) 之后创建：tauri.conf.json 声明的窗口在
             // setup 完成前就会加载前端并 invoke 命令，先于 manage 触发 get_config
@@ -82,6 +82,9 @@ fn main() {
             commands::dict::dict_update_rule,
             commands::dict::dict_delete_rule,
             commands::dict::dict_toggle_rule,
+            // T-018 日志中心。
+            commands::log::log_query,
+            commands::log::log_export,
         ])
         .run(tauri::generate_context!())
         .expect("error while running vibetype application");
@@ -119,30 +122,30 @@ fn create_app_windows(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-/// 初始化 tracing：按天滚动到平台标准日志目录，保留策略见 tech/08 8.1 / tech/04 4.7。
-fn init_logging(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+/// 初始化 tracing：双写管道（文本 + 数据库目标）到平台标准日志目录，
+/// 保留策略见 tech/08 8.1 / tech/04 4.7。
+fn init_logging(app: &tauri::App) -> Result<services::log::LogStore, Box<dyn std::error::Error>> {
     // 平台标准日志目录（tech/08 8.1），如 Linux 的 ~/.local/state/vibetype/logs
     let log_dir = app.path().app_log_dir()?;
     std::fs::create_dir_all(&log_dir)?;
 
-    let (writer, guard) = services::log::LogService::daily_writer(&log_dir);
-    // guard 必须存活至进程退出；进程退出时由 OS 回收，未刷新缓冲随进程结束丢弃属可接受行为。
-    std::mem::forget(guard);
-
+    // T-018：tracing 事件经自定义 Layer 入队，写线程按配置分发到文本 / 数据库。
+    let (layer, store) = services::log::log_pipeline(&log_dir);
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
-        .with(fmt::layer().with_writer(writer).with_ansi(false))
+        .with(layer)
         .with(filter)
         .init();
 
     tracing::info!(log_dir = %log_dir.display(), "日志系统初始化完成");
-    Ok(())
+    Ok(store)
 }
 
 /// 初始化数据目录与核心服务（tech/08 8.1；T-003 / T-004）。
 async fn init_services(
     app: &mut tauri::App,
     process_start: std::time::Instant,
+    log_store: services::log::LogStore,
 ) -> Result<AppState, Box<dyn std::error::Error>> {
     // 首次启动创建配置 / 数据 / 日志三个平台标准目录（tech/08 8.1）。
     let config_dir = app.path().app_config_dir()?;
@@ -164,6 +167,28 @@ async fn init_services(
 
     // ConfigStore 单例：加载配置（损坏自动回退 .bak / 默认）。
     let config = services::config_store::ConfigStore::load(&config_dir, event_tx.clone())?;
+
+    // T-018：应用日志记录目标（默认文本 + 数据库全开），变更经 config:changed 热更新。
+    log_store.set_targets(config.get().await.log.targets.clone(), &log_dir);
+    {
+        let mut config_rx = event_tx.subscribe();
+        let config_store = config.clone();
+        let store = log_store.clone();
+        let log_dir = log_dir.clone();
+        tauri::async_runtime::spawn(async move {
+            while let Ok(event) = config_rx.recv().await {
+                if matches!(
+                    event,
+                    events::AppEvent::ConfigChanged {
+                        section: services::config_store::ConfigSection::Log
+                    }
+                ) {
+                    let targets = config_store.get().await.log.targets;
+                    store.set_targets(targets, &log_dir);
+                }
+            }
+        });
+    }
 
     // 录音控制通道（tech/04 4.2，容量 8）：快捷键 / 悬浮球 / 小窗 → AudioService。
     let (record_tx, record_rx) = tokio::sync::mpsc::channel(8);
@@ -281,6 +306,7 @@ async fn init_services(
         dict,
         post_process,
         pipeline,
+        log_store,
     ))
 }
 
