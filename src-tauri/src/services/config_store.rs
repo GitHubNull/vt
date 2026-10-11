@@ -19,6 +19,7 @@ use tracing::{info, warn};
 
 use crate::error::AppError;
 use crate::events::{AppEvent, RecoverySource};
+use crate::services::scene::SceneKind;
 
 /// 配置文件名（配置目录下）。
 pub const CONFIG_FILE_NAME: &str = "config.json";
@@ -35,6 +36,12 @@ pub enum ConfigSection {
     Asr,
     About,
     Log,
+    /// 场景识别（T-501：自定义规则 + 手动 override）。
+    Scene,
+    /// AI 供应商（T-531；API Key 本体在 OS 凭据存储，配置只存引用键）。
+    Ai,
+    /// 使用统计（T-541）。
+    Stats,
 }
 
 impl ConfigSection {
@@ -49,6 +56,9 @@ impl ConfigSection {
             "asr" => Some(Self::Asr),
             "about" => Some(Self::About),
             "log" => Some(Self::Log),
+            "scene" => Some(Self::Scene),
+            "ai" => Some(Self::Ai),
+            "stats" => Some(Self::Stats),
             _ => None,
         }
     }
@@ -213,17 +223,41 @@ impl Default for OutputConfig {
     }
 }
 
+/// 技术词库设置（T-521，F-CODE-06）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TechLexiconConfig {
+    /// 已启用的技术栈标识（空 = 全部停用，识别原文直出）。
+    pub enabled_stacks: Vec<String>,
+}
+
+/// 专有名词设置（T-522，F-DICT-02；条目本体存 `dict/proper-nouns.json`）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProperNounsConfig {
+    /// 专有名词纠正启用开关。
+    pub enabled: bool,
+}
+
 /// 词典设置（F-DICT-01 总开关，词条本体由 T-011 DictService 管理）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DictConfig {
     /// 替换词典启用开关。
     pub enabled: bool,
+    /// 技术词库（T-521）。
+    pub tech_lexicon: TechLexiconConfig,
+    /// 专有名词（T-522）。
+    pub proper_nouns: ProperNounsConfig,
 }
 
 impl Default for DictConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            tech_lexicon: TechLexiconConfig::default(),
+            proper_nouns: ProperNounsConfig { enabled: true },
+        }
     }
 }
 
@@ -250,6 +284,9 @@ pub struct AsrConfig {
     pub download_proxy: Option<String>,
     /// 模型下载源（默认镜像源）。
     pub model_source: ModelSource,
+    /// 识别标点恢复（T-545）。
+    #[serde(default)]
+    pub punct: PunctConfig,
 }
 
 /// 关于页设置（F-ABOUT-01）。
@@ -302,6 +339,98 @@ impl Default for LogConfig {
     }
 }
 
+/// 识别标点恢复设置（T-545，F-SET-02；ct-transformer 标点模型）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PunctConfig {
+    /// 启用识别标点恢复（默认关；开启且标点模型可用时随识别输出句读）。
+    pub enabled: bool,
+}
+
+/// AI 供应商条目（T-531，F-AI-06）。
+///
+/// 安全（NFR-S-01）：API Key 本体只存 OS 凭据管理器，`api_key_ref` 仅为引用键，
+/// 配置文件中永无明文 Key。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiProviderEntry {
+    /// 稳定 ID（预置供应商用预设 ID，用户自建用生成 ID）。
+    pub id: String,
+    /// 显示名。
+    pub name: String,
+    /// 协议类型（`openai_compatible` / `ollama` / `lm_studio`）。
+    pub protocol: String,
+    /// API Base URL。
+    pub base_url: String,
+    /// 启用开关。
+    pub enabled: bool,
+    /// 当前选用模型（None = 未选择）。
+    pub model: Option<String>,
+    /// OS 凭据存储引用键（None = 未配置 Key；本地供应商不需要）。
+    pub api_key_ref: Option<String>,
+    /// 本地供应商（Ollama / LM Studio，无外发）。
+    pub local: bool,
+}
+
+impl Default for AiProviderEntry {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            protocol: "openai_compatible".to_string(),
+            base_url: String::new(),
+            enabled: false,
+            model: None,
+            api_key_ref: None,
+            local: false,
+        }
+    }
+}
+
+/// AI 设置（T-531 起；供应商清单，密钥引用不入配置）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiConfig {
+    pub providers: Vec<AiProviderEntry>,
+}
+
+/// 使用统计设置（T-541，F-STAT-01、NFR-PR-04）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StatsConfig {
+    /// 匿名统计上报开关（默认关；v0.5 仅占位——上报通道未建，开启不产生任何外发）。
+    pub anonymous_upload: bool,
+}
+
+/// 场景识别设置（T-501；自定义规则与手动 override，规则引擎设置在 T-502 扩展）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SceneConfig {
+    /// 用户自定义规则（应用标识 → 场景），优先于内置规则库。
+    pub custom_rules: Vec<SceneRule>,
+    /// 手动场景指定（识别受限环境兜底）；None = 自动识别。
+    pub override_scene: Option<SceneKind>,
+}
+
+/// 用户自定义场景规则（T-501）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SceneRule {
+    /// 匹配应用标识（进程名或应用名，大小写不敏感由匹配层决定）。
+    pub app: String,
+    /// 目标场景。
+    pub scene: SceneKind,
+}
+
+impl Default for SceneRule {
+    fn default() -> Self {
+        Self {
+            app: String::new(),
+            scene: SceneKind::Unknown,
+        }
+    }
+}
+
 /// 应用配置根（按节分模块；各节带 `#[serde(default)]` 保证升级新增字段不破坏旧配置，
 /// 即 NFR-R-06"升级保留配置"的读取侧保证）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -315,6 +444,9 @@ pub struct AppConfig {
     pub asr: AsrConfig,
     pub about: AboutConfig,
     pub log: LogConfig,
+    pub scene: SceneConfig,
+    pub ai: AiConfig,
+    pub stats: StatsConfig,
 }
 
 /// 配置持久化错误编号（用户可见提示中的稳定编号）。
@@ -479,6 +611,15 @@ impl ConfigStore {
                 }
                 config.log = log;
             }
+            ConfigSection::Scene => {
+                config.scene = serde_json::from_value(value).map_err(apply_err)?;
+            }
+            ConfigSection::Ai => {
+                config.ai = serde_json::from_value(value).map_err(apply_err)?;
+            }
+            ConfigSection::Stats => {
+                config.stats = serde_json::from_value(value).map_err(apply_err)?;
+            }
         }
         Ok(())
     }
@@ -591,6 +732,9 @@ mod tests {
             ConfigSection::Asr => serde_json::to_value(&config.asr).unwrap(),
             ConfigSection::About => serde_json::to_value(&config.about).unwrap(),
             ConfigSection::Log => serde_json::to_value(&config.log).unwrap(),
+            ConfigSection::Scene => serde_json::to_value(&config.scene).unwrap(),
+            ConfigSection::Ai => serde_json::to_value(&config.ai).unwrap(),
+            ConfigSection::Stats => serde_json::to_value(&config.stats).unwrap(),
         }
     }
 

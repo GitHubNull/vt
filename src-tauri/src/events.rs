@@ -108,6 +108,8 @@ pub enum AppEvent {
     DictChanged,
     /// 快捷键注册失败等错误提示（携带稳定错误编号）。
     HotkeyError { code: String, message: String },
+    /// 当前场景变更（T-501，前端场景规则联动；`scene` 为场景标识字符串）。
+    SceneChanged { scene: String },
 }
 
 impl AppEvent {
@@ -127,6 +129,7 @@ impl AppEvent {
             Self::AsrNotice { .. } => Some("asr:notice"),
             Self::DictChanged => Some("dict:changed"),
             Self::HotkeyError { .. } => Some("hotkey:error"),
+            Self::SceneChanged { .. } => Some("scene:changed"),
         }
     }
 }
