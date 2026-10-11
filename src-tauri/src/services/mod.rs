@@ -7,6 +7,7 @@
 pub mod ai;
 pub mod asr;
 pub mod audio;
+pub mod command_engine;
 pub mod config_store;
 pub mod dict;
 pub mod esc_cancel;

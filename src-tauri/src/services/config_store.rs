@@ -42,6 +42,8 @@ pub enum ConfigSection {
     Ai,
     /// 使用统计（T-541）。
     Stats,
+    /// 编程能力（T-511 起：口令总开关、中英混排、终端保护；T-517 设置页）。
+    Coding,
 }
 
 impl ConfigSection {
@@ -59,6 +61,7 @@ impl ConfigSection {
             "scene" => Some(Self::Scene),
             "ai" => Some(Self::Ai),
             "stats" => Some(Self::Stats),
+            "coding" => Some(Self::Coding),
             _ => None,
         }
     }
@@ -431,6 +434,29 @@ impl Default for SceneRule {
     }
 }
 
+/// 编程能力设置（T-511 起；口令引擎、中英混排规范、终端安全保护的总开关，
+/// 细分配置在 T-517 编程设置页）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CodingConfig {
+    /// 编程口令总开关（产品原则 3：结果可预期，可整体关闭）。
+    pub commands_enabled: bool,
+    /// 中英混排规范（T-516：大小写 / 空格 / 标点规则）。
+    pub mixed_text_rules: bool,
+    /// 终端安全保护（T-515：终端场景禁自动回车等，安全原则优先）。
+    pub terminal_guard: bool,
+}
+
+impl Default for CodingConfig {
+    fn default() -> Self {
+        Self {
+            commands_enabled: true,
+            mixed_text_rules: true,
+            terminal_guard: true,
+        }
+    }
+}
+
 /// 应用配置根（按节分模块；各节带 `#[serde(default)]` 保证升级新增字段不破坏旧配置，
 /// 即 NFR-R-06"升级保留配置"的读取侧保证）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -447,6 +473,7 @@ pub struct AppConfig {
     pub scene: SceneConfig,
     pub ai: AiConfig,
     pub stats: StatsConfig,
+    pub coding: CodingConfig,
 }
 
 /// 配置持久化错误编号（用户可见提示中的稳定编号）。
@@ -620,6 +647,9 @@ impl ConfigStore {
             ConfigSection::Stats => {
                 config.stats = serde_json::from_value(value).map_err(apply_err)?;
             }
+            ConfigSection::Coding => {
+                config.coding = serde_json::from_value(value).map_err(apply_err)?;
+            }
         }
         Ok(())
     }
@@ -735,6 +765,7 @@ mod tests {
             ConfigSection::Scene => serde_json::to_value(&config.scene).unwrap(),
             ConfigSection::Ai => serde_json::to_value(&config.ai).unwrap(),
             ConfigSection::Stats => serde_json::to_value(&config.stats).unwrap(),
+            ConfigSection::Coding => serde_json::to_value(&config.coding).unwrap(),
         }
     }
 
