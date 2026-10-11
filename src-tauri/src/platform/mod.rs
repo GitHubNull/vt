@@ -10,3 +10,4 @@ pub mod hotkey;
 pub mod inject;
 pub mod notify;
 pub mod volume;
+pub mod window_info;

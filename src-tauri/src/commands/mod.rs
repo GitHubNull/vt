@@ -4,6 +4,7 @@
 //! 命令按领域分文件（dict.rs / config.rs / ai.rs / device.rs 等，随任务补充）。
 
 pub mod about;
+pub mod ai;
 pub mod asr;
 pub mod audio;
 pub mod config;
@@ -11,5 +12,6 @@ pub mod dict;
 pub mod hotkey;
 pub mod inject;
 pub mod log;
+pub mod stats;
 pub mod system;
 pub mod window;

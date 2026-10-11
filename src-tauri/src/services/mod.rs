@@ -4,6 +4,7 @@
 //! CommandEngine / AiPipeline / McpServer / DeviceHub / ConfigStore / LogService /
 //! UpdateService）随对应任务在本目录补充。
 
+pub mod ai;
 pub mod asr;
 pub mod audio;
 pub mod config_store;
@@ -13,8 +14,13 @@ pub mod hotkey;
 pub mod inject;
 pub mod log;
 pub mod model_download;
+pub mod lexicon;
 pub mod pipeline;
 pub mod post_process;
+pub mod proper_nouns;
+pub mod punct;
+pub mod scene;
 pub mod session;
 pub mod stages;
 pub mod update;
+pub mod usage_stats;
