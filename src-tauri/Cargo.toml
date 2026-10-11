@@ -55,9 +55,16 @@ base64 = "0.22"
 image = "0.25"
 zip = "2"
 
-# 平台焦点检测（T-007；仅对应平台编译）
+# 平台焦点检测（T-007；仅对应平台编译）；Win32_UI_Input_KeyboardAndMouse / Threading /
+# LibraryLoader 为低级键盘钩子后端（WH_KEYBOARD_LL，修饰键单独作触发键）所需
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
 [target.'cfg(target_os = "macos")'.dependencies]
 accessibility-sys = "0.1"
 core-foundation = "0.9"

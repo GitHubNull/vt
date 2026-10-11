@@ -4,8 +4,9 @@
 //! macOS NSEvent 全局监听 / Linux X11 XRecord）。平台差异说明：
 //! - macOS：全局监听需要"辅助功能"权限，缺失时注册失败 → 由服务层降级为
 //!   错误事件（E-HOTKEY-001）并引导授权（tech/09 9.4），不崩溃；
-//! - Windows：单独右 Alt 作为快捷键可能受系统保留影响，注册失败时引导换键
-//!   （tech/09 9.2.1，v0.1 不做低级钩子）;
+//! - Windows：global-hotkey 的 RegisterHotKey 路径不映射修饰键 Code，单个左右
+//!   修饰键作触发键时改走本模块的低级键盘钩子后端（`windows_llhook`，
+//!   WH_KEYBOARD_LL，含 PRD 3.1.1 规则 3/4 的组合键抑制与 0.3 s 误触门）；
 //! - Linux Wayland：协议限制无法全局监听，注册失败并提示（v1.0 提供替代方案）。
 //!
 //! 最小权限说明（AGENTS.md 3.5）：本能力仅注册用户配置的全局快捷键并接收其
@@ -16,6 +17,13 @@ use std::sync::Arc;
 
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 use tokio::sync::mpsc;
+
+#[cfg(windows)]
+mod windows_composite;
+#[cfg(windows)]
+mod windows_llhook;
+
+mod modifier_key;
 
 /// 后端上报的原始按键事件（Pressed / Released）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,11 +152,28 @@ impl HotkeyBackend for TauriHotkeyBackend {
 }
 
 /// 创建三平台默认后端（tech/04 4.5 工厂函数）。
+///
+/// Windows 为组合后端（修饰键触发 → 低级钩子，其余 → global-shortcut 插件）；
+/// 其他平台直接用 global-shortcut 插件。
 pub fn default_backend(
     app: tauri::AppHandle,
     events: mpsc::Sender<RawHotkeyEvent>,
 ) -> Arc<dyn HotkeyBackend> {
-    Arc::new(TauriHotkeyBackend { app, events })
+    #[cfg(windows)]
+    {
+        let tauri_backend = TauriHotkeyBackend {
+            app,
+            events: events.clone(),
+        };
+        Arc::new(windows_composite::WindowsCompositeBackend::new(
+            tauri_backend,
+            events,
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        Arc::new(TauriHotkeyBackend { app, events })
+    }
 }
 
 #[cfg(test)]
@@ -290,5 +315,33 @@ mod tests {
             parse_accelerator("MouseForward"),
             Err(HotkeyError::MouseKeyUnsupported(_))
         ));
+    }
+
+    use super::modifier_key::modifier_trigger_vk;
+
+    #[test]
+    fn modifier_trigger_vk_matches_single_modifiers() {
+        // 六个左右修饰键单独作触发键 → 低级钩子路径（Win32 VK 0xA0–0xA5）。
+        assert_eq!(modifier_trigger_vk("AltRight"), Some(0xA5));
+        assert_eq!(modifier_trigger_vk("AltLeft"), Some(0xA4));
+        assert_eq!(modifier_trigger_vk("ControlRight"), Some(0xA3));
+        assert_eq!(modifier_trigger_vk("ControlLeft"), Some(0xA2));
+        assert_eq!(modifier_trigger_vk("ShiftRight"), Some(0xA1));
+        assert_eq!(modifier_trigger_vk("ShiftLeft"), Some(0xA0));
+    }
+
+    #[test]
+    fn modifier_trigger_vk_rejects_combos_and_other_keys() {
+        // 组合键（即使含修饰键）走 RegisterHotKey 路径。
+        assert_eq!(modifier_trigger_vk("ControlLeft+AltRight"), None);
+        assert_eq!(modifier_trigger_vk("ControlLeft+ShiftLeft+Space"), None);
+        // 非修饰键、Win 键（有意不覆盖）、空段、鼠标侧键。
+        assert_eq!(modifier_trigger_vk("F2"), None);
+        assert_eq!(modifier_trigger_vk("Space"), None);
+        assert_eq!(modifier_trigger_vk("MetaLeft"), None);
+        assert_eq!(modifier_trigger_vk("SuperRight"), None);
+        assert_eq!(modifier_trigger_vk(""), None);
+        assert_eq!(modifier_trigger_vk("AltRight+"), None);
+        assert_eq!(modifier_trigger_vk("MouseBack"), None);
     }
 }
