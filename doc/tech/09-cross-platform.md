@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | Windows | `global-shortcut`（RegisterHotKey）+ 自研低级键盘钩子（WH_KEYBOARD_LL，`platform/hotkey/windows_llhook.rs`） | 单个左右修饰键作触发键时 global-hotkey 的 `key_to_vk` 不映射修饰键 Code 且裸修饰键不可靠（右 Alt 兼 AltGr），改由低级钩子覆盖；钩子路径实现 PRD 3.1.1 规则 3（组合键抑制）与规则 4（0.3 s 误触门）；组合键 / 功能键仍走 RegisterHotKey |
 | macOS | `global-shortcut`（Carbon / NSEvent 监听） | 需要辅助功能权限；首次注册时引导授权 |
-| Linux X11 | `global-shortcut`（XRecord / XGrabKey） | 与窗口管理器快捷键冲突检测（F-SYS-03） |
+| Linux X11 | `global-shortcut`（XGrabKey） | 裸修饰键无法注册（其映射表不含修饰键 Code，与 Windows 同因），默认键 Alt+R 为组合键不受影响；与窗口管理器快捷键冲突检测（F-SYS-03） |
 | Linux Wayland | 协议限制无法全局监听 | v1.0 提供替代方案：桌面门户（GlobalShortcuts portal）或提示用户改用小窗触发 |
 
 ### 9.2.2 文本上屏（InjectService）
