@@ -28,6 +28,7 @@ use tracing::{info, warn};
 use crate::error::AppError;
 use crate::events::{AppEvent, RecordingResultEvent, RecordingState};
 use crate::platform::audio::{AudioBackend, AudioChunk, AudioError, InputStream};
+use crate::platform::volume::{system_volume_control, VolumeControl};
 use crate::services::config_store::{ConfigSection, ConfigStore};
 use crate::services::hotkey::RecordCommand;
 use crate::services::session::SessionTracker;
@@ -45,6 +46,131 @@ const LEVEL_THROTTLE: Duration = Duration::from_millis(50);
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
 /// 默认热插拔重试间隔（main.rs 传入；测试注入更短间隔）。
 pub const REOPEN_RETRY: Duration = Duration::from_secs(2);
+
+/// 提示音参数（PRD 3.8.2「提示音」，默认关）：开始 / 结束录音的轻提示音，
+/// 约 880 / 620 Hz、70 ms 正弦，首尾 10 ms 淡入淡出。
+const HINT_START_HZ: f32 = 880.0;
+const HINT_STOP_HZ: f32 = 620.0;
+const HINT_DURATION: Duration = Duration::from_millis(70);
+/// 淡入淡出时长（防爆音）。
+const HINT_FADE: Duration = Duration::from_millis(10);
+/// 提示音幅度（峰值约 0.25，避免刺耳）。
+const HINT_AMPLITUDE: f32 = 0.25;
+
+/// 合成正弦提示音采样（淡入淡出包络；独立纯函数便于单测）。
+fn synth_beep(freq_hz: f32, duration: Duration, sample_rate: u32) -> Vec<f32> {
+    let total = ((sample_rate as f64) * duration.as_secs_f64()).round() as usize;
+    let fade = (((sample_rate as f64) * HINT_FADE.as_secs_f64()).round() as usize).max(1);
+    (0..total)
+        .map(|i| {
+            let t = i as f32 / sample_rate as f32;
+            // 包络：距首尾各 fade 个采样的线性斜坡，封顶 1.0。
+            let edge = i.min(total.saturating_sub(1).saturating_sub(i));
+            let envelope = (edge as f32 / fade as f32).min(1.0);
+            (std::f32::consts::TAU * freq_hz * t).sin() * envelope * HINT_AMPLITUDE
+        })
+        .collect()
+}
+
+/// 播放提示音（独立线程，不阻塞录音主路径；任何错误仅 warn）。
+fn play_sound_hint(freq_hz: f32) {
+    std::thread::spawn(move || {
+        if let Err(err) = play_beep_blocking(freq_hz) {
+            warn!(error = %err, "提示音播放失败");
+        }
+    });
+}
+
+/// 用 cpal 默认输出设备播放一次合成提示音（阻塞至播放结束）。
+fn play_beep_blocking(freq_hz: f32) -> Result<(), String> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| "无可用输出设备".to_string())?;
+    let config = device
+        .default_output_config()
+        .map_err(|err| err.to_string())?;
+    if config.sample_format() != cpal::SampleFormat::F32 {
+        return Err(format!("不支持的采样格式: {:?}", config.sample_format()));
+    }
+    let channels = config.channels() as usize;
+    let sample_rate = config.sample_rate().0;
+    let samples = synth_beep(freq_hz, HINT_DURATION, sample_rate);
+    let cursor = AtomicUsize::new(0);
+    let stream = device
+        .build_output_stream(
+            &config.into(),
+            move |out: &mut [f32], _| {
+                let mut i = cursor.load(Ordering::Relaxed);
+                for frame in out.chunks_mut(channels) {
+                    let sample = samples.get(i).copied().unwrap_or(0.0);
+                    for slot in frame.iter_mut() {
+                        *slot = sample;
+                    }
+                    i += 1;
+                }
+                cursor.store(i, Ordering::Relaxed);
+            },
+            |err| warn!(error = %err, "提示音输出流错误"),
+            None,
+        )
+        .map_err(|err| err.to_string())?;
+    stream.play().map_err(|err| err.to_string())?;
+    // 等待波形播完再关流（cpal 无阻塞 drain API）。
+    std::thread::sleep(HINT_DURATION + Duration::from_millis(30));
+    Ok(())
+}
+
+/// 录音静音守卫（PRD 3.8.4「录音时静音」，默认开）：
+/// 只在"我们主动静音过"时恢复（`muted` 标志）；Drop 兜底——异常退出 /
+/// Esc 取消 / 设备错误等任何路径漏恢复时强制恢复，绝不把扬声器留在静音态。
+struct MuteGuard {
+    control: Arc<dyn VolumeControl>,
+    muted: bool,
+}
+
+impl MuteGuard {
+    fn new(control: Arc<dyn VolumeControl>) -> Self {
+        Self {
+            control,
+            muted: false,
+        }
+    }
+
+    /// 静音默认输出设备；失败仅 warn，不影响录音。
+    fn mute(&mut self) {
+        if self.muted {
+            return;
+        }
+        match self.control.set_mute(true) {
+            Ok(()) => {
+                self.muted = true;
+                info!("录音开始：系统扬声器已静音");
+            }
+            Err(err) => warn!(error = %err, "静音系统扬声器失败（不影响录音）"),
+        }
+    }
+
+    /// 恢复默认输出设备（仅在我们静音过时）。
+    fn unmute(&mut self) {
+        if !self.muted {
+            return;
+        }
+        match self.control.set_mute(false) {
+            Ok(()) => info!("录音结束：系统扬声器已恢复"),
+            Err(err) => warn!(error = %err, "恢复系统扬声器失败"),
+        }
+        self.muted = false;
+    }
+}
+
+impl Drop for MuteGuard {
+    fn drop(&mut self) {
+        self.unmute();
+    }
+}
 
 /// RMS 音量电平（归一化 0.0~1.0）。
 pub fn rms_level(samples: &[f32]) -> f32 {
@@ -127,6 +253,8 @@ pub struct AudioService {
     stats: Arc<AudioStats>,
     /// 会话代次追踪（T-010）：begin / cancel 的写入方，识别与上屏侧只读判定。
     tracker: Arc<SessionTracker>,
+    /// 系统输出音量控制（PRD 3.8.4 录音时静音扬声器；测试可注入 mock）。
+    volume: Arc<dyn VolumeControl>,
 }
 
 impl AudioService {
@@ -136,12 +264,24 @@ impl AudioService {
         events: broadcast::Sender<AppEvent>,
         tracker: Arc<SessionTracker>,
     ) -> Self {
+        Self::with_volume(backend, config, events, tracker, system_volume_control())
+    }
+
+    /// 指定音量控制实现（生产路径经 `new()` 注入平台默认实现）。
+    fn with_volume(
+        backend: Arc<dyn AudioBackend>,
+        config: ConfigStore,
+        events: broadcast::Sender<AppEvent>,
+        tracker: Arc<SessionTracker>,
+        volume: Arc<dyn VolumeControl>,
+    ) -> Self {
         Self {
             backend,
             config,
             events,
             stats: Arc::new(AudioStats::default()),
             tracker,
+            volume,
         }
     }
 
@@ -178,6 +318,11 @@ impl AudioService {
 
             let app_config = self.config.get().await;
             let mut keep_warm = app_config.audio.keep_warm;
+            // 录音时静音扬声器 / 提示音配置快照（config:changed 时刷新）。
+            let mut mute_speaker = app_config.audio.mute_speaker_while_recording;
+            let mut sound_hint = app_config.hotkey.sound_hint;
+            // 静音恢复守卫：actor 退出（异常终止）时 Drop 兜底恢复扬声器。
+            let mut mute_guard = MuteGuard::new(self.volume.clone());
             // 常驻预热：启动即打开设备流（NFR-P-01：按下即录，首帧即采）。
             if keep_warm {
                 match self.open_stream().await {
@@ -263,6 +408,14 @@ impl AudioService {
                             state = RecordingState::Recording;
                             let mode = Some(self.config.get().await.hotkey.mode);
                             let _ = self.events.send(AppEvent::RecordingState { state, mode });
+                            // PRD 3.8.4：录音开始（采集已就绪）即静音系统扬声器；
+                            // 3.8.2：提示音（默认关）。两者失败均不影响录音。
+                            if mute_speaker {
+                                mute_guard.mute();
+                            }
+                            if sound_hint {
+                                play_sound_hint(HINT_START_HZ);
+                            }
                             info!("录音会话开始");
                         } else if want_stop {
                             if state != RecordingState::Recording {
@@ -287,6 +440,11 @@ impl AudioService {
                                 frames_rx = None;
                                 errors_rx = None;
                             }
+                            // 录音结束（Stop）：恢复扬声器 + 结束提示音。
+                            mute_guard.unmute();
+                            if sound_hint {
+                                play_sound_hint(HINT_STOP_HZ);
+                            }
                             start_instant = None;
                         } else if matches!(command, RecordCommand::Cancel) {
                             if state == RecordingState::Recording {
@@ -310,6 +468,11 @@ impl AudioService {
                                 let _ = self
                                     .events
                                     .send(AppEvent::RecordingState { state, mode: None });
+                                // Esc 取消同样是录音结束：恢复扬声器 + 结束提示音。
+                                mute_guard.unmute();
+                                if sound_hint {
+                                    play_sound_hint(HINT_STOP_HZ);
+                                }
                                 info!("录音会话已取消，音频已丢弃");
                             } else if state == RecordingState::Processing {
                                 // T-012 识别 / 上屏在途取消：标记会话取消（在途结果
@@ -364,6 +527,8 @@ impl AudioService {
                         warn!(error = %err, "麦克风采集流错误");
                         stream_handle = None;
                         reopen_at = Some(Instant::now() + reopen_retry);
+                        // 录音中设备异常：同样恢复扬声器（Drop 之外的显式出口）。
+                        mute_guard.unmute();
                         if state == RecordingState::Recording {
                             // 错误前已到达帧通道的帧仍属本会话，照常入缓冲后随部分结果交付。
                             Self::drain_pending_frames(
@@ -404,6 +569,8 @@ impl AudioService {
                             Ok(AppEvent::ConfigChanged { section: ConfigSection::Audio }) => {
                                 let audio_config = self.config.get().await.audio;
                                 let new_keep_warm = audio_config.keep_warm;
+                                // 录音静音开关：刷新快照（正在进行的会话不中途切换）。
+                                mute_speaker = audio_config.mute_speaker_while_recording;
                                 if matches!(state, RecordingState::Recording | RecordingState::Processing) {
                                     // 录音 / 处理中不切流：会话终态后应用新设备。
                                     pending_device_update = true;
@@ -439,6 +606,10 @@ impl AudioService {
                                     }
                                 }
                                 keep_warm = new_keep_warm;
+                            }
+                            Ok(AppEvent::ConfigChanged { section: ConfigSection::Hotkey }) => {
+                                // 提示音开关（hotkey 节）：刷新快照。
+                                sound_hint = self.config.get().await.hotkey.sound_hint;
                             }
                             Ok(AppEvent::SessionFinished { session_id }) => {
                                 // T-012 会话终态（上屏完成 / 失败 / 无效丢弃）：
@@ -488,6 +659,11 @@ impl AudioService {
                                     stream_handle = None;
                                     frames_rx = None;
                                     errors_rx = None;
+                                }
+                                // 时长上限自动结束：恢复扬声器 + 结束提示音。
+                                mute_guard.unmute();
+                                if sound_hint {
+                                    play_sound_hint(HINT_STOP_HZ);
                                 }
                                 start_instant = None;
                             }
@@ -639,6 +815,7 @@ fn map_open_err(err: AudioError) -> AppError {
 mod tests {
     use super::*;
     use crate::platform::audio::MockAudioBackend;
+    use crate::platform::volume::MockVolumeControl;
     use crate::services::config_store::AudioConfig;
 
     /// 建立测试环境：mock 后端 + 临时目录配置（指定 keep_warm）+ 事件订阅 + 命令通道。
@@ -650,6 +827,8 @@ mod tests {
         cmd_tx: mpsc::Sender<RecordCommand>,
         stats: Arc<AudioStats>,
         tracker: Arc<SessionTracker>,
+        /// 音量控制 mock：断言「录音时静音」调用序列（start→stop 的 mute/unmute）。
+        volume: Arc<MockVolumeControl>,
     }
 
     async fn setup(keep_warm: bool) -> TestEnv {
@@ -673,11 +852,13 @@ mod tests {
 
         let backend = MockAudioBackend::with_default_device();
         let tracker = Arc::new(SessionTracker::new());
-        let service = Arc::new(AudioService::new(
+        let volume = Arc::new(MockVolumeControl::new());
+        let service = Arc::new(AudioService::with_volume(
             backend.clone(),
             config.clone(),
             events_tx.clone(),
             tracker.clone(),
+            volume.clone(),
         ));
         let stats = service.stats();
         let (cmd_tx, cmd_rx) = mpsc::channel(8);
@@ -690,7 +871,18 @@ mod tests {
             cmd_tx,
             stats,
             tracker,
+            volume,
         }
+    }
+
+    /// 设置录音静音开关（`audio.mute_speaker_while_recording`，默认开）。
+    async fn set_mute_speaker(env: &TestEnv, enabled: bool) {
+        let mut audio = serde_json::to_value(env.config.get().await.audio).unwrap();
+        audio["mute_speaker_while_recording"] = serde_json::json!(enabled);
+        env.config
+            .set_section(ConfigSection::Audio, audio)
+            .await
+            .unwrap();
     }
 
     /// 模拟上屏链路终态（T-012：真实环境由 PipelineService / AsrService 广播）。
@@ -1153,5 +1345,195 @@ mod tests {
         let mut expired = RecordingSession::new(2, 100, 16_000);
         expired.started = Instant::now() - Duration::from_secs(301);
         assert!(expired.cap_reached(Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn mute_guard_mutes_and_restores_on_drop() {
+        // start → drop：静音后未显式恢复时，Drop 兜底恢复（防异常路径残留静音）。
+        let volume = Arc::new(MockVolumeControl::new());
+        {
+            let mut guard = MuteGuard::new(volume.clone());
+            guard.mute();
+            assert!(guard.muted);
+            assert_eq!(volume.calls(), vec![true]);
+        }
+        assert_eq!(volume.calls(), vec![true, false], "Drop 时必须恢复扬声器");
+    }
+
+    #[test]
+    fn mute_guard_restore_is_idempotent_and_only_when_self_muted() {
+        let volume = Arc::new(MockVolumeControl::new());
+        // 未静音过：unmute / drop 都不产生调用（不碰用户自己设的静音）。
+        {
+            let guard = MuteGuard::new(volume.clone());
+            drop(guard);
+        }
+        assert!(volume.calls().is_empty(), "未主动静音就不得恢复");
+        // 显式 mute → unmute → drop：恢复恰好一次。
+        {
+            let mut guard = MuteGuard::new(volume.clone());
+            guard.mute();
+            guard.unmute();
+            guard.unmute();
+            assert!(!guard.muted);
+        }
+        assert_eq!(
+            volume.calls(),
+            vec![true, false],
+            "恢复必须幂等且只在主动静音后发生"
+        );
+    }
+
+    #[test]
+    fn synth_beep_length_amplitude_and_fade() {
+        let sample_rate = 48_000u32;
+        let samples = synth_beep(HINT_START_HZ, HINT_DURATION, sample_rate);
+        // 长度 ≈ 采样率 × 时长（70 ms @48 kHz = 3360 样本，±1 取整误差）。
+        let expected = (sample_rate as f64 * HINT_DURATION.as_secs_f64()).round() as usize;
+        assert!((samples.len() as i64 - expected as i64).abs() <= 1);
+        // 幅度非零且不超过设定峰值。
+        let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(peak > 0.15, "峰值应显著非零，实际 {peak}");
+        assert!(peak <= HINT_AMPLITUDE + 1e-6);
+        // 淡入淡出：首尾包络趋近 0，中段幅度显著大于首样本。
+        assert!(samples.first().map(|s| s.abs()).unwrap_or(1.0) < 0.05);
+        assert!(samples.last().map(|s| s.abs()).unwrap_or(1.0) < 0.05);
+        let mid = samples[samples.len() / 2].abs();
+        assert!(mid > peak * 0.9, "中段应位于包络平台，实际 {mid}");
+    }
+
+    #[tokio::test]
+    async fn recording_mutes_speaker_and_stop_restores() {
+        // PRD 3.8.4（默认开）：Start → 静音；Stop → 恢复。
+        let mut env = setup(true).await;
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Warming),
+        )
+        .await;
+        env.cmd_tx.send(RecordCommand::Start).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Recording),
+        )
+        .await;
+        assert_eq!(env.volume.calls(), vec![true], "录音开始应静音扬声器");
+        env.cmd_tx.send(RecordCommand::Stop).await.unwrap();
+        next_event(&mut env.events_rx, Duration::from_secs(2), |event| {
+            matches!(event, AppEvent::AudioReady { .. })
+        })
+        .await;
+        assert_eq!(
+            env.volume.calls(),
+            vec![true, false],
+            "录音结束必须恢复扬声器"
+        );
+        finish_processing(&env, 1);
+    }
+
+    #[tokio::test]
+    async fn cancel_restores_speaker_and_stream_error_too() {
+        // Esc 取消与设备异常路径：同样必须恢复扬声器（结果可预期 / 不残留静音）。
+        let mut env = setup(true).await;
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Warming),
+        )
+        .await;
+        env.cmd_tx.send(RecordCommand::Start).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Recording),
+        )
+        .await;
+        env.backend.push_frame(vec![0.1; 320]);
+        env.cmd_tx.send(RecordCommand::Cancel).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Cancelled),
+        )
+        .await;
+        assert_eq!(
+            env.volume.calls(),
+            vec![true, false],
+            "Esc 取消必须恢复扬声器"
+        );
+        // 设备异常路径：再次开始录音后模拟流错误，交付部分音频并恢复扬声器。
+        env.cmd_tx.send(RecordCommand::Start).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Recording),
+        )
+        .await;
+        env.backend.push_frame(vec![0.1; 320]);
+        env.backend.push_stream_error();
+        next_event_labelled(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Processing),
+            "Processing(设备错误交付)",
+        )
+        .await;
+        assert_eq!(
+            env.volume.calls(),
+            vec![true, false, true, false],
+            "设备异常结束同样必须恢复扬声器"
+        );
+        finish_processing(&env, 2);
+    }
+
+    #[tokio::test]
+    async fn mute_disabled_by_config_and_refreshed_on_change() {
+        // 配置门控：开关关闭时不静音；config:changed 后新会话按新配置执行。
+        let mut env = setup(true).await;
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Warming),
+        )
+        .await;
+        set_mute_speaker(&env, false).await;
+        // 等待 config:changed 事件被 actor 消费（快照刷新）。
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        env.cmd_tx.send(RecordCommand::Start).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Recording),
+        )
+        .await;
+        assert!(env.volume.calls().is_empty(), "开关关闭时不得静音扬声器");
+        env.cmd_tx.send(RecordCommand::Cancel).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Cancelled),
+        )
+        .await;
+        // 配置改回开启：新会话重新静音并恢复。
+        set_mute_speaker(&env, true).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        env.cmd_tx.send(RecordCommand::Start).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Recording),
+        )
+        .await;
+        assert_eq!(env.volume.calls(), vec![true], "开关恢复后应重新静音");
+        env.cmd_tx.send(RecordCommand::Cancel).await.unwrap();
+        next_event(
+            &mut env.events_rx,
+            Duration::from_secs(2),
+            is_state(RecordingState::Cancelled),
+        )
+        .await;
+        assert_eq!(env.volume.calls(), vec![true, false], "取消后应恢复扬声器");
     }
 }

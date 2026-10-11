@@ -13,14 +13,9 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { save } from '@tauri-apps/plugin-dialog'
 import SettingsRow from '../../components/SettingsRow.vue'
 import LegalTextDialog from '../../components/LegalTextDialog.vue'
+import ChangelogDialog from '../../components/ChangelogDialog.vue'
 import { useConfigStore } from '../../stores/config'
-import {
-  checkUpdate,
-  applyUpdate,
-  exportLogs,
-  getAppInfo,
-  getLegalText,
-} from '../../api/about'
+import { checkUpdate, applyUpdate, exportLogs, getAppInfo, getLegalText } from '../../api/about'
 import { AppError, toAppError } from '../../api/client'
 import { t } from '../../i18n'
 import { LINKS, SKIPPED_VERSION_KEY } from '../../constants'
@@ -41,6 +36,9 @@ const exportMessage = ref(null) // { ok, text }
 
 /** 法律文本对话框。 */
 const legalDialog = ref({ visible: false, title: '', text: '', markdown: false })
+
+/** 更新日志对话框（应用内展示，不走外部链接）。 */
+const changelogVisible = ref(false)
 const legalLoading = ref(false)
 
 onMounted(() => {
@@ -150,7 +148,10 @@ async function openLegal(document, title, markdown = false) {
   } catch (error) {
     legalDialog.value.visible = false
     const appError = toAppError(error)
-    store.lastError = new AppError(appError.code, `${t.about.legal.loadFailed}：${appError.message}`)
+    store.lastError = new AppError(
+      appError.code,
+      `${t.about.legal.loadFailed}：${appError.message}`,
+    )
   } finally {
     legalLoading.value = false
   }
@@ -163,12 +164,12 @@ const legalItems = computed(() => [
   { key: 'privacy', label: t.about.legal.privacy, markdown: true },
 ])
 
-const versionText = computed(() =>
-  appInfo.value ? `v${appInfo.value.version}` : '',
-)
+const versionText = computed(() => (appInfo.value ? `v${appInfo.value.version}` : ''))
 
 const errorText = computed(() =>
-  store.lastError ? `${store.lastError.message}（${t.common.errorCode} ${store.lastError.code}）` : '',
+  store.lastError
+    ? `${store.lastError.message}（${t.common.errorCode} ${store.lastError.code}）`
+    : '',
 )
 </script>
 
@@ -197,7 +198,11 @@ const errorText = computed(() =>
             <Button
               type="button"
               icon="pi pi-download"
-              :label="updateState === 'checking' ? t.about.versionCard.checking : t.about.versionCard.checkUpdate"
+              :label="
+                updateState === 'checking'
+                  ? t.about.versionCard.checking
+                  : t.about.versionCard.checkUpdate
+              "
               :loading="updateState === 'checking' || updateState === 'applying'"
               @click="onCheckUpdate"
             />
@@ -210,7 +215,9 @@ const errorText = computed(() =>
           <ToggleSwitch
             :model-value="store.sections.about.auto_check_update"
             :aria-label="t.about.versionCard.autoCheck.label"
-            @update:model-value="(v) => store.updateSection('about', { ...store.sections.about, auto_check_update: v })"
+            @update:model-value="
+              (v) => store.updateSection('about', { ...store.sections.about, auto_check_update: v })
+            "
           />
         </SettingsRow>
       </div>
@@ -231,14 +238,26 @@ const errorText = computed(() =>
         <div v-else-if="updateState === 'available' && updateResult" class="update-available">
           <Message severity="info">
             <div class="update-available-body">
-              <p class="update-version">{{ t.about.update.newVersionPrefix }}{{ updateResult.version }}</p>
+              <p class="update-version">
+                {{ t.about.update.newVersionPrefix }}{{ updateResult.version }}
+              </p>
               <p v-if="updateResult.notes" class="update-notes">{{ updateResult.notes }}</p>
             </div>
           </Message>
           <div class="update-available-actions">
             <Button type="button" :label="t.about.update.applyNow" @click="onApplyUpdate" />
-            <Button type="button" :label="t.about.update.later" severity="secondary" @click="onLater" />
-            <Button type="button" :label="t.about.update.skip" severity="secondary" @click="onSkipVersion" />
+            <Button
+              type="button"
+              :label="t.about.update.later"
+              severity="secondary"
+              @click="onLater"
+            />
+            <Button
+              type="button"
+              :label="t.about.update.skip"
+              severity="secondary"
+              @click="onSkipVersion"
+            />
           </div>
         </div>
       </div>
@@ -254,7 +273,7 @@ const errorText = computed(() =>
             icon="pi pi-history"
             :label="t.about.changelog.view"
             severity="secondary"
-            @click="openExternal(LINKS.releases)"
+            @click="changelogVisible = true"
           />
         </SettingsRow>
       </div>
@@ -303,7 +322,11 @@ const errorText = computed(() =>
       :markdown="legalDialog.markdown"
     />
 
-    <Message v-if="store.lastError" severity="error" class="settings-error">{{ errorText }}</Message>
+    <ChangelogDialog v-model:visible="changelogVisible" />
+
+    <Message v-if="store.lastError" severity="error" class="settings-error">{{
+      errorText
+    }}</Message>
   </div>
 </template>
 

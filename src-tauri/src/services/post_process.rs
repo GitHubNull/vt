@@ -22,6 +22,9 @@ use crate::events::AppEvent;
 use crate::services::config_store::{ConfigSection, ConfigStore};
 use crate::services::dict::{DictService, ReplaceRule};
 use crate::services::session::SessionTracker;
+use crate::services::stages::{
+    FilterFillersStage, RemoveTrailingPunctStage, SmartNumberStage, TraditionalChineseStage,
+};
 
 /// 管线上下文：Stage 间传递的文本与状态。
 #[derive(Debug, Clone)]
@@ -119,6 +122,9 @@ impl Stage for ReplaceStage {
 ///
 /// - `rules` 须已按错误词长度降序排列（长词优先，见 `DictService::enabled_snapshot`）；
 /// - 完整匹配错误词：英文错误词不区分大小写（`eq_ignore_ascii_case`，仅影响 ASCII）；
+/// - 拼音口令空格修正：错误词为纯 ASCII 字母 / 数字时，文本中拉丁字母之间的
+///   空格不影响匹配（ASR 常把连续拉丁字母识别为 "h a o f a n" 或 "hao fan"，
+///   逐字母顺序相等即命中，空白随替换一并删除）；
 /// - 整词边界：错误词为纯 ASCII 字母 / 数字时，要求前后相邻字符不是 ASCII 字母 /
 ///   数字（避免 "F2" 规则错改 "F22"）；中文错误词以字为词，无边界要求；
 /// - 正确词为空 = 删除该词；单趟扫描、命中即前进，规则不互相级联。
@@ -132,32 +138,64 @@ pub fn apply_replace_rules(text: &str, rules: &[ReplaceRule]) -> String {
     'outer: while i < chars.len() {
         for rule in rules {
             let wrong: Vec<char> = rule.wrong.chars().collect();
-            if wrong.is_empty() || i + wrong.len() > chars.len() {
+            if wrong.is_empty() {
                 continue;
             }
-            if !chars[i..i + wrong.len()]
-                .iter()
-                .zip(wrong.iter())
-                .all(|(a, b)| a.eq_ignore_ascii_case(b))
-            {
-                continue;
-            }
+            // 命中长度（纯 ASCII 错误词走宽松匹配，空白穿插不固定长度）。
+            let consumed = if is_ascii_word(&wrong) {
+                match match_ascii_word_loose(&chars, i, &wrong) {
+                    Some(consumed) => consumed,
+                    None => continue,
+                }
+            } else {
+                if i + wrong.len() > chars.len() {
+                    continue;
+                }
+                if !chars[i..i + wrong.len()]
+                    .iter()
+                    .zip(wrong.iter())
+                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
+                {
+                    continue;
+                }
+                wrong.len()
+            };
             if is_ascii_word(&wrong) {
                 let before_ok = i == 0 || !chars[i - 1].is_ascii_alphanumeric();
-                let after = i + wrong.len();
+                let after = i + consumed;
                 let after_ok = after >= chars.len() || !chars[after].is_ascii_alphanumeric();
                 if !before_ok || !after_ok {
                     continue;
                 }
             }
             out.push_str(&rule.right); // 空 right = 删除该词
-            i += wrong.len();
+            i += consumed;
             continue 'outer;
         }
         out.push(chars[i]);
         i += 1;
     }
     out
+}
+
+/// 纯 ASCII 错误词的宽松匹配：文本中拉丁字母之间允许穿插空白
+/// （ASR 插空格修正），逐字母顺序相等（大小写不敏感）即命中，
+/// 返回从 `start` 起消耗的字符数（含穿插的空白）。
+fn match_ascii_word_loose(chars: &[char], start: usize, wrong: &[char]) -> Option<usize> {
+    let mut ti = start;
+    for (index, wc) in wrong.iter().enumerate() {
+        // 首字母严格在 start 位置命中；其后每个字母前允许跳过文本中的空白。
+        if index > 0 {
+            while ti < chars.len() && chars[ti].is_whitespace() {
+                ti += 1;
+            }
+        }
+        if ti >= chars.len() || !chars[ti].eq_ignore_ascii_case(wc) {
+            return None;
+        }
+        ti += 1;
+    }
+    Some(ti - start)
 }
 
 /// 错误词是否纯 ASCII 字母 / 数字（决定是否需要整词边界）。
@@ -167,8 +205,16 @@ fn is_ascii_word(chars: &[char]) -> bool {
 
 /// 后处理管线：消费 `Recognized` → 按序执行启用 Stage → 广播出口事件。
 pub struct PostProcess {
-    /// v0.1 首个 Stage：替换词典。
+    /// 过滤语气词（F-SET-02，PRD 3.8.3；管线首位）。
+    filter_fillers: FilterFillersStage,
+    /// 智能数字转换（F-SET-02；在词典替换前，先规范数字再匹配规则）。
+    smart_number: SmartNumberStage,
+    /// v0.1 替换词典。
     replace: ReplaceStage,
+    /// 输出繁体中文（F-SET-02；在词典替换后，正确词先落位再统一繁化）。
+    traditional: TraditionalChineseStage,
+    /// 删除结尾标点（F-SET-02；管线末位）。
+    remove_trailing: RemoveTrailingPunctStage,
     /// 后续 Stage 注册处（v0.5 口令 / AI Stage）。
     extra: Vec<Box<dyn Stage>>,
     events: broadcast::Sender<AppEvent>,
@@ -184,6 +230,10 @@ impl PostProcess {
         tracker: Arc<SessionTracker>,
     ) -> Arc<Self> {
         let process = Self {
+            filter_fillers: FilterFillersStage::new(config.clone()),
+            smart_number: SmartNumberStage::new(config.clone()),
+            traditional: TraditionalChineseStage::new(config.clone()),
+            remove_trailing: RemoveTrailingPunctStage::new(config.clone()),
             replace: ReplaceStage::new(dict, config),
             extra: Vec::new(),
             events,
@@ -201,22 +251,33 @@ impl PostProcess {
         process
     }
 
-    /// 有序 Stage 列表（替换词典在前，v0.5 Stage 按注册顺序追加）。
+    /// 有序 Stage 列表：过滤语气词 → 智能数字 → 替换词典 → 繁体 → 删结尾标点，
+    /// v0.5 Stage 按注册顺序追加。
     fn stages(&self) -> Vec<&dyn Stage> {
-        let mut stages: Vec<&dyn Stage> = vec![&self.replace];
+        let mut stages: Vec<&dyn Stage> = vec![
+            &self.filter_fillers,
+            &self.smart_number,
+            &self.replace,
+            &self.traditional,
+            &self.remove_trailing,
+        ];
         for stage in &self.extra {
             stages.push(stage.as_ref());
         }
         stages
     }
 
-    /// 刷新全部 Stage 的缓存（规则 / 开关变更时）。
+    /// 刷新全部 Stage 的缓存（词典 / 输出配置变更时）。
     async fn refresh_stages(&self) {
+        self.filter_fillers.refresh().await;
+        self.smart_number.refresh().await;
         self.replace.refresh().await;
+        self.traditional.refresh().await;
+        self.remove_trailing.refresh().await;
     }
 
     /// 启动管线循环：消费 Recognized → 管线 → PipelineOutput + recording:result；
-    /// 同时监听词典 / 配置变更刷新 Stage 缓存。
+    /// 同时监听词典 / 输出配置变更刷新 Stage 缓存。
     pub fn start(self: Arc<Self>, mut events_rx: broadcast::Receiver<AppEvent>) {
         tokio::spawn(async move {
             loop {
@@ -224,11 +285,14 @@ impl PostProcess {
                     Ok(AppEvent::Recognized { session_id, text }) => {
                         self.process_recognized(session_id, text).await;
                     }
-                    Ok(AppEvent::DictChanged)
-                    | Ok(AppEvent::ConfigChanged {
-                        section: ConfigSection::Dict,
-                    }) => {
+                    Ok(AppEvent::DictChanged) => {
                         self.refresh_stages().await;
+                    }
+                    Ok(AppEvent::ConfigChanged { section }) => {
+                        // 替换词典开关 → dict 节；四个输出选项开关 → output 节。
+                        if matches!(section, ConfigSection::Dict | ConfigSection::Output) {
+                            self.refresh_stages().await;
+                        }
                     }
                     Ok(_) => {}
                     Err(_) => break,
@@ -371,6 +435,40 @@ mod tests {
         // 中文错误词无边界要求：以字为词，逐字完整匹配。
         let rules = sorted(vec![rule(1, "行", "hang")]);
         assert_eq!(apply_replace_rules("执行", &rules), "执hang");
+    }
+
+    #[test]
+    fn latin_word_tolerates_asr_spaces() {
+        // 拼音口令空格修正：ASR 对拉丁字母插空格（逐字母或按音节）仍命中。
+        let rules = sorted(vec![rule(1, "haofan", "好烦")]);
+        assert_eq!(apply_replace_rules("h a o f a n", &rules), "好烦");
+        assert_eq!(apply_replace_rules("hao fan", &rules), "好烦");
+        assert_eq!(apply_replace_rules("haofan", &rules), "好烦");
+        // 句中位置同样生效。
+        assert_eq!(apply_replace_rules("我说hao fan啊", &rules), "我说好烦啊");
+    }
+
+    #[test]
+    fn latin_word_space_fix_keeps_boundary() {
+        // 边界保护不因宽松匹配失效：错改 "haofans" / "ahaofan" 仍被阻止。
+        let rules = sorted(vec![rule(1, "haofan", "好烦")]);
+        assert_eq!(apply_replace_rules("haofans", &rules), "haofans");
+        assert_eq!(apply_replace_rules("ahaofan", &rules), "ahaofan");
+    }
+
+    #[test]
+    fn latin_space_fix_no_partial_match() {
+        // 字母序列必须完整相等（"h a o f a" 缺尾字母不命中）。
+        let rules = sorted(vec![rule(1, "haofan", "好烦")]);
+        assert_eq!(apply_replace_rules("h a o f a", &rules), "h a o f a");
+    }
+
+    #[test]
+    fn chinese_source_rule_unaffected_by_space_fix() {
+        // 中文错误词逻辑不变："微信" → WeChat 不得回归。
+        let rules = sorted(vec![rule(1, "微信", "WeChat")]);
+        assert_eq!(apply_replace_rules("加我微信吧", &rules), "加我WeChat吧");
+        assert_eq!(apply_replace_rules("微信", &rules), "WeChat");
     }
 
     // ---- 管线框架：顺序、开关、短路（SPEC 验收：注册两个假 Stage 验证顺序） ----

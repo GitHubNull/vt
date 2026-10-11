@@ -81,6 +81,8 @@ pub struct ModelMeta {
     pub size_bytes: u64,
     /// 模型文件 SHA-256（下载后校验；损坏拒绝加载）。
     pub sha256: &'static str,
+    /// 词表文件 SHA-256（与模型文件同样校验；两个内置模型共用同一份 tokens.txt）。
+    pub tokens_sha256: &'static str,
     /// 模型归档下载地址（官方 GitHub Release）。
     pub url: &'static str,
     /// 归档内模型文件成员路径。
@@ -90,8 +92,12 @@ pub struct ModelMeta {
 }
 
 /// sherpa-onnx Paraformer 中文模型（2023-03-28 发布，FunASR 训练）。
-const PARAFORMER_ZH_URL: &str =
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2023-03-28.tar.bz2";
+const PARAFORMER_ZH_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2023-03-28.tar.bz2";
+
+/// 内置模型共用的词表文件 SHA-256（两个条目 tokens_file 指向同一份 tokens.txt，
+/// 2026-10-11 从 hf-mirror 实文件计算）。
+const PARAFORMER_ZH_TOKENS_SHA256: &str =
+    "59aba8873a2ed1e122c25fee421e25f283b63290efbde85c1f01a853d83cb6e6";
 
 /// 内置模型清单（同一份归档按量化档位拆分为两个条目，各自只解包所需文件）。
 pub const MODELS: &[ModelMeta] = &[
@@ -102,6 +108,7 @@ pub const MODELS: &[ModelMeta] = &[
         tier: ModelTier::Speed,
         size_bytes: 223_385_835,
         sha256: "9ada9127ca5b82320385ac12340eb8b05dee64fd45cf8cf593ec693826ec2fd7",
+        tokens_sha256: PARAFORMER_ZH_TOKENS_SHA256,
         url: PARAFORMER_ZH_URL,
         model_file: "sherpa-onnx-paraformer-zh-2023-03-28/model.int8.onnx",
         tokens_file: "sherpa-onnx-paraformer-zh-2023-03-28/tokens.txt",
@@ -113,6 +120,7 @@ pub const MODELS: &[ModelMeta] = &[
         tier: ModelTier::Accuracy,
         size_bytes: 863_821_140,
         sha256: "3883fdb54abe1ab077997c8e14cf0532fc2498f8fb5eb118cd53d4ba05e4d169",
+        tokens_sha256: PARAFORMER_ZH_TOKENS_SHA256,
         url: PARAFORMER_ZH_URL,
         model_file: "sherpa-onnx-paraformer-zh-2023-03-28/model.onnx",
         tokens_file: "sherpa-onnx-paraformer-zh-2023-03-28/tokens.txt",
@@ -154,17 +162,50 @@ pub fn resolve_default_models_dir(exe_dir: &Path, data_models_dir: &Path) -> Pat
     }
 }
 
-/// 模型文件完整性校验：计算 SHA-256 并与元数据比对（损坏返回 E-ASR-003）。
-pub fn verify_model_hash(model_path: &Path, meta: &ModelMeta) -> Result<(), AppError> {
-    let bytes = std::fs::read(model_path)
-        .map_err(|err| AppError::Asr(ERR_LOAD_FAILED, format!("读取模型文件失败: {err}")))?;
+/// 删除模型后的提示文案（T-014 验收 4.6.12）。
+///
+/// 只有删除的是激活模型才涉及回退 / 无可用模型；删除非激活模型不提及这些，
+/// 避免"明明还有其他可用模型"却提示没有可用模型的逻辑错误。
+fn delete_notice(was_active: bool, fallback: Option<&str>) -> String {
+    if !was_active {
+        return "已删除模型".to_string();
+    }
+    match fallback {
+        Some(id) => format!(
+            "已删除模型，识别将使用 {}",
+            model_meta(id).map(|m| m.name).unwrap_or(id)
+        ),
+        None => "已删除模型，当前没有可用模型，请下载模型后再使用语音输入".to_string(),
+    }
+}
+
+/// 模型完整性校验：model.onnx 与 tokens.txt 均计算 SHA-256 并与元数据比对
+/// （验收 4.6.4；任一文件损坏 / 被篡改都返回 E-ASR-003，错误信息指明文件与
+/// 期望 / 实际哈希）。
+pub fn verify_model_hash(model_dir: &Path, meta: &ModelMeta) -> Result<(), AppError> {
+    verify_file_hash(
+        &model_dir.join(MODEL_ONNX_NAME),
+        MODEL_ONNX_NAME,
+        meta.sha256,
+    )?;
+    verify_file_hash(
+        &model_dir.join(TOKENS_NAME),
+        TOKENS_NAME,
+        meta.tokens_sha256,
+    )
+}
+
+/// 单文件 SHA-256 校验（读取失败视为加载失败，哈希不符视为损坏）。
+fn verify_file_hash(path: &Path, label: &str, expected: &str) -> Result<(), AppError> {
+    let bytes = std::fs::read(path)
+        .map_err(|err| AppError::Asr(ERR_LOAD_FAILED, format!("读取{label}失败: {err}")))?;
     let mut hasher = sha2::Sha256::new();
     hasher.update(&bytes);
     let actual = hex_lower(&hasher.finalize());
-    if actual != meta.sha256 {
+    if actual != expected {
         return Err(AppError::Asr(
             ERR_HASH_MISMATCH,
-            "模型文件校验失败，请删除后重新下载".to_string(),
+            format!("{label} 校验失败（期望 {expected}，实际 {actual}），请删除后重新下载"),
         ));
     }
     Ok(())
@@ -356,11 +397,10 @@ impl AsrService {
                 .collect()
         };
         for meta in pending {
-            let model_path = model_dir(&models_dir, meta.id).join(MODEL_ONNX_NAME);
-            let ok =
-                tokio::task::spawn_blocking(move || verify_model_hash(&model_path, &meta).is_ok())
-                    .await
-                    .unwrap_or(false);
+            let dir = model_dir(&models_dir, meta.id);
+            let ok = tokio::task::spawn_blocking(move || verify_model_hash(&dir, &meta).is_ok())
+                .await
+                .unwrap_or(false);
             let mut verified = self.verified.write().await;
             if ok {
                 verified.insert(meta.id.to_string());
@@ -530,13 +570,7 @@ impl AsrService {
         }
         let _ = self.events.send(AppEvent::AsrNotice {
             code: "E-ASR-000".to_string(),
-            message: match &fallback {
-                Some(id) => format!(
-                    "已删除模型，识别将使用 {}",
-                    model_meta(id).map(|m| m.name).unwrap_or(id)
-                ),
-                None => "已删除模型，当前没有可用模型，请下载模型后再使用语音输入".to_string(),
-            },
+            message: delete_notice(was_active, fallback.as_deref()),
         });
         Ok(())
     }
@@ -581,13 +615,9 @@ impl AsrService {
     async fn load_engine(&self, meta: &ModelMeta) -> Result<Engine, AppError> {
         let meta = *meta;
         let dir = model_dir(&self.effective_models_dir().await, meta.id);
-        let model_path = dir.join(MODEL_ONNX_NAME);
-        let tokens_path = dir.join(TOKENS_NAME);
-        let engine = tokio::task::spawn_blocking(move || {
-            load_engine_blocking(&meta, &model_path, &tokens_path)
-        })
-        .await
-        .map_err(|err| AppError::Asr(ERR_LOAD_FAILED, format!("模型加载任务失败: {err}")))??;
+        let engine = tokio::task::spawn_blocking(move || load_engine_blocking(&meta, &dir))
+            .await
+            .map_err(|err| AppError::Asr(ERR_LOAD_FAILED, format!("模型加载任务失败: {err}")))??;
         self.verified.write().await.insert(meta.id.to_string());
         Ok(engine)
     }
@@ -831,7 +861,7 @@ impl AsrService {
         Ok(())
     }
 
-    /// 下载产物完整性检查：必备文件齐全 + 模型文件 SHA-256 校验（T-006/T-017）。
+    /// 下载产物完整性检查：必备文件齐全 + 模型 / 词表文件 SHA-256 校验（T-006/T-017）。
     fn check_download(meta: &ModelMeta, tmp_dir: &Path) -> Result<(), AppError> {
         if !tmp_dir.join(MODEL_ONNX_NAME).exists() || !tmp_dir.join(TOKENS_NAME).exists() {
             return Err(AppError::Asr(
@@ -839,7 +869,7 @@ impl AsrService {
                 "模型文件不完整，下载已中断".to_string(),
             ));
         }
-        verify_model_hash(&tmp_dir.join(MODEL_ONNX_NAME), meta)
+        verify_model_hash(tmp_dir, meta)
     }
 
     /// 镜像源：逐文件直传下载（免解包），进度累计进共享计数器。
@@ -984,19 +1014,18 @@ impl AsrService {
 }
 
 /// 阻塞加载引擎：哈希校验（未缓存时）+ 构造 ParaformerRecognizer。
-fn load_engine_blocking(
-    meta: &ModelMeta,
-    model_path: &Path,
-    tokens_path: &Path,
-) -> Result<Engine, AppError> {
+fn load_engine_blocking(meta: &ModelMeta, dir: &Path) -> Result<Engine, AppError> {
+    let model_path = dir.join(MODEL_ONNX_NAME);
+    let tokens_path = dir.join(TOKENS_NAME);
     if !model_path.exists() || !tokens_path.exists() {
         return Err(AppError::Asr(
             ERR_MODEL_MISSING,
             "模型文件缺失，请先下载模型".to_string(),
         ));
     }
-    // 每次加载都校验哈希：文件可能在下载后被外部破坏（T-006 验收）。
-    verify_model_hash(model_path, meta)?;
+    // 每次加载都校验哈希（model.onnx + tokens.txt）：文件可能在下载后被外部破坏
+    // 或词表被篡改（T-006 验收、4.6.4）。
+    verify_model_hash(dir, meta)?;
     let started = Instant::now();
     let engine =
         sherpa_rs::paraformer::ParaformerRecognizer::new(sherpa_rs::paraformer::ParaformerConfig {
@@ -1029,6 +1058,7 @@ mod tests {
         for meta in MODELS {
             assert!(meta.size_bytes > 0);
             assert_eq!(meta.sha256.len(), 64);
+            assert_eq!(meta.tokens_sha256.len(), 64);
             assert!(meta.url.starts_with("https://"));
             assert!(meta.model_file.ends_with(".onnx"));
             assert!(meta.tokens_file.ends_with("tokens.txt"));
@@ -1095,14 +1125,87 @@ mod tests {
 
     #[tokio::test]
     async fn hash_mismatch_rejected() {
-        // 构造一个假模型文件：哈希必须失败（E-ASR-003）。
+        // 构造假模型文件：model.onnx 哈希必须失败（E-ASR-003）。
         let dir = std::env::temp_dir().join(format!("vt-asr-hash-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let fake = dir.join("model.onnx");
-        std::fs::write(&fake, b"not a real model").unwrap();
+        std::fs::write(dir.join("model.onnx"), b"not a real model").unwrap();
+        std::fs::write(dir.join("tokens.txt"), "a 1\n").unwrap();
         let meta = model_meta("paraformer-zh-int8").unwrap();
-        let err = verify_model_hash(&fake, meta).unwrap_err();
+        let err = verify_model_hash(&dir, meta).unwrap_err();
         assert_eq!(err.code(), "E-ASR-003");
+        // 错误信息指明文件与期望 / 实际哈希。
+        let msg = err.to_string();
+        assert!(msg.contains("model.onnx"), "错误信息应指明文件名: {msg}");
+        assert!(msg.contains("期望"), "错误信息应含期望哈希: {msg}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn tokens_hash_mismatch_rejected() {
+        // 验收 4.6.4：tokens.txt 被篡改同样报错（E-ASR-003），不再只校验 model.onnx。
+        // 用自建元数据构造"模型文件正确、词表文件被篡改"的场景。
+        let dir = std::env::temp_dir().join(format!(
+            "vt-asr-tokens-hash-test-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let model_bytes = b"fake onnx";
+        let tokens_bytes = b"tampered tokens";
+        std::fs::write(dir.join("model.onnx"), model_bytes).unwrap();
+        std::fs::write(dir.join("tokens.txt"), tokens_bytes).unwrap();
+        let meta = ModelMeta {
+            id: "test",
+            name: "测试",
+            languages: "中文",
+            tier: ModelTier::Accuracy,
+            size_bytes: model_bytes.len() as u64,
+            sha256: Box::leak(hex_lower(&sha2::Sha256::digest(model_bytes)).into_boxed_str()),
+            tokens_sha256: "0".repeat(64).leak(),
+            url: "https://example.com/model.tar.bz2",
+            model_file: "model.onnx",
+            tokens_file: "tokens.txt",
+        };
+        let err = verify_model_hash(&dir, &meta).unwrap_err();
+        assert_eq!(err.code(), "E-ASR-003");
+        let msg = err.to_string();
+        assert!(msg.contains("tokens.txt"), "错误信息应指明词表文件: {msg}");
+        assert!(msg.contains("期望"), "错误信息应含期望哈希: {msg}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn both_files_match_hash_ok() {
+        // 双文件哈希均匹配时校验通过（自建元数据，真实文件内容）。
+        let dir = std::env::temp_dir().join(format!(
+            "vt-asr-hash-ok-test-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("model.onnx"), b"fake onnx").unwrap();
+        std::fs::write(dir.join("tokens.txt"), b"real tokens").unwrap();
+        let meta = ModelMeta {
+            id: "test",
+            name: "测试",
+            languages: "中文",
+            tier: ModelTier::Accuracy,
+            size_bytes: 9,
+            sha256: Box::leak(hex_lower(&sha2::Sha256::digest(b"fake onnx")).into_boxed_str()),
+            tokens_sha256: Box::leak(
+                hex_lower(&sha2::Sha256::digest(b"real tokens")).into_boxed_str(),
+            ),
+            url: "https://example.com/model.tar.bz2",
+            model_file: "model.onnx",
+            tokens_file: "tokens.txt",
+        };
+        assert!(verify_model_hash(&dir, &meta).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1174,6 +1277,148 @@ mod tests {
         );
         let err = service.delete_model("nope".to_string()).await.unwrap_err();
         assert_eq!(err.code(), "E-ASR-007");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_notice_three_branches() {
+        // 验收 4.6.12：删除激活模型有回退 / 无回退、删除非激活模型三种文案。
+        assert_eq!(
+            delete_notice(true, Some("paraformer-zh")),
+            "已删除模型，识别将使用 Paraformer 中文"
+        );
+        assert_eq!(
+            delete_notice(true, None),
+            "已删除模型，当前没有可用模型，请下载模型后再使用语音输入"
+        );
+        // 非激活模型：不提及回退 / 无可用模型（原逻辑错误的修复点）。
+        assert_eq!(delete_notice(false, None), "已删除模型");
+        assert_eq!(delete_notice(false, Some("paraformer-zh")), "已删除模型");
+    }
+
+    /// 造两个"文件齐全"（未哈希认证）的模型目录，供删除场景测试。
+    fn seed_models(models_dir: &Path) {
+        for meta in MODELS {
+            let dir = model_dir(models_dir, meta.id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(MODEL_ONNX_NAME), b"fake").unwrap();
+            std::fs::write(dir.join(TOKENS_NAME), "a 1\n").unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_inactive_model_notice_is_plain() {
+        // 原缺陷：删除非激活模型时 fallback 恒为 None，错误提示"没有可用模型"。
+        // 修复后提示应只是"已删除模型"（激活模型 paraformer-zh-int8 仍在）。
+        let dir = std::env::temp_dir().join(format!(
+            "vt-asr-del-inactive-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let models_dir = dir.join("models");
+        seed_models(&models_dir);
+        let (tx, mut rx) = crate::events::channel();
+        let service = AsrService::new(
+            models_dir,
+            ConfigStore::load(&dir, crate::events::channel().0).unwrap(),
+            tx,
+            std::sync::Arc::new(crate::services::session::SessionTracker::new()),
+        );
+        // 激活模型为首个可用（paraformer-zh-int8），删除另一个（非激活）。
+        service
+            .delete_model("paraformer-zh".to_string())
+            .await
+            .unwrap();
+        let notice = loop {
+            match rx.recv().await.unwrap() {
+                AppEvent::AsrNotice { message, .. } => break message,
+                _ => continue,
+            }
+        };
+        assert_eq!(notice, "已删除模型");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn delete_active_model_falls_back_with_notice() {
+        // 删除激活模型且有可用回退：提示回退模型名，配置清空走自动回退。
+        let dir = std::env::temp_dir().join(format!(
+            "vt-asr-del-active-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let models_dir = dir.join("models");
+        seed_models(&models_dir);
+        let (tx, mut rx) = crate::events::channel();
+        let config = ConfigStore::load(&dir, crate::events::channel().0).unwrap();
+        let service = AsrService::new(
+            models_dir,
+            config.clone(),
+            tx,
+            std::sync::Arc::new(crate::services::session::SessionTracker::new()),
+        );
+        service
+            .delete_model("paraformer-zh-int8".to_string())
+            .await
+            .unwrap();
+        let notice = loop {
+            match rx.recv().await.unwrap() {
+                AppEvent::AsrNotice { message, .. } => break message,
+                _ => continue,
+            }
+        };
+        assert_eq!(notice, "已删除模型，识别将使用 Paraformer 中文");
+        // 配置中的 current_model_id 已清掉（走自动回退）。
+        assert!(config.get().await.asr.current_model_id.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn delete_active_model_without_fallback_notice() {
+        // 删除激活模型且无其他可用模型：提示下载引导。
+        let dir = std::env::temp_dir().join(format!(
+            "vt-asr-del-no-fallback-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let models_dir = dir.join("models");
+        let only = model_dir(&models_dir, "paraformer-zh-int8");
+        std::fs::create_dir_all(&only).unwrap();
+        std::fs::write(only.join(MODEL_ONNX_NAME), b"fake").unwrap();
+        std::fs::write(only.join(TOKENS_NAME), "a 1\n").unwrap();
+        let (tx, mut rx) = crate::events::channel();
+        let service = AsrService::new(
+            models_dir,
+            ConfigStore::load(&dir, crate::events::channel().0).unwrap(),
+            tx,
+            std::sync::Arc::new(crate::services::session::SessionTracker::new()),
+        );
+        service
+            .delete_model("paraformer-zh-int8".to_string())
+            .await
+            .unwrap();
+        let notice = loop {
+            match rx.recv().await.unwrap() {
+                AppEvent::AsrNotice { message, .. } => break message,
+                _ => continue,
+            }
+        };
+        assert_eq!(
+            notice,
+            "已删除模型，当前没有可用模型，请下载模型后再使用语音输入"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

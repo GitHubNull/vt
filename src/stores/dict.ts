@@ -7,6 +7,8 @@ import { listen } from '@tauri-apps/api/event'
 import {
   dictAddRule,
   dictDeleteRule,
+  dictExportFile,
+  dictImportFile,
   dictListRules,
   dictToggleRule,
   dictUpdateRule,
@@ -96,6 +98,31 @@ export const useDictStore = defineStore('dict', () => {
     }
   }
 
+  /** 导出全部规则到 targetPath（plugin-dialog 选定）；失败记录错误并返回 null。 */
+  async function exportRulesTo(targetPath: string): Promise<number | null> {
+    try {
+      lastError.value = null
+      return await dictExportFile(targetPath)
+    } catch (error) {
+      lastError.value = toAppError(error)
+      return null
+    }
+  }
+
+  /** 从 path 导入规则，返回导入条数；失败记录错误并返回 null。 */
+  async function importRulesFrom(path: string): Promise<number | null> {
+    try {
+      lastError.value = null
+      const count = await dictImportFile(path)
+      // 以服务端广播为准刷新（此处同步刷新保证即时反馈）。
+      await refresh()
+      return count
+    } catch (error) {
+      lastError.value = toAppError(error)
+      return null
+    }
+  }
+
   /** 订阅词典变更（本窗口命令触发外的所有路径：其他窗口 / 服务内部）。 */
   async function startListening(): Promise<void> {
     if (listening.value) return
@@ -123,5 +150,7 @@ export const useDictStore = defineStore('dict', () => {
     updateRule,
     removeRule,
     toggleRule,
+    exportRulesTo,
+    importRulesFrom,
   }
 })

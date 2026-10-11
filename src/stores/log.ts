@@ -12,6 +12,9 @@ import { useConfigStore } from './config'
 /** 单页条数（后端上限 200）。 */
 export const PAGE_SIZE = 200
 
+/** 级别过滤选项（PRD 3.13：DEBUG / INFO / WARN / ERROR），默认全选。 */
+export const LOG_LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR']
+
 export const useLogStore = defineStore('log', () => {
   const configStore = useConfigStore()
 
@@ -19,7 +22,8 @@ export const useLogStore = defineStore('log', () => {
   const keyword = ref('')
   const regex = ref(false)
   const caseSensitive = ref(false)
-  const levels = ref<string[]>([])
+  // 默认全选；用户清空选中时语义为"不过滤"（见 buildQuery），避免白屏困惑。
+  const levels = ref<string[]>([...LOG_LEVELS])
   const fromLocal = ref<string | null>(null)
   const toLocal = ref<string | null>(null)
 
@@ -39,7 +43,8 @@ export const useLogStore = defineStore('log', () => {
       keyword: keyword.value.trim() ? keyword.value.trim() : null,
       regex: regex.value,
       case_sensitive: caseSensitive.value,
-      levels: levels.value,
+      // 级别清空 = 不过滤（等价全选）：向后端发送全部级别，避免空数组语义歧义。
+      levels: levels.value.length ? levels.value : [...LOG_LEVELS],
       from_millis: fromLocal.value ? new Date(fromLocal.value).getTime() : null,
       to_millis: toLocal.value ? new Date(toLocal.value).getTime() : null,
       limit: PAGE_SIZE,

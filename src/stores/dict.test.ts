@@ -113,6 +113,40 @@ describe('stores/dict（T-011 替换词典）', () => {
     expect(store.isFull).toBe(true)
   })
 
+  it('exportRulesTo 传保存路径、返回条数；失败返回 null 并记录错误', async () => {
+    invokeMock.mockResolvedValue([rule(1, 'f二', 'F2')])
+    const store = useDictStore()
+    await store.ensureLoaded()
+    invokeMock.mockClear()
+
+    invokeMock.mockResolvedValue(1)
+    expect(await store.exportRulesTo('/tmp/vibetype-dict.json')).toBe(1)
+    expect(invokeMock).toHaveBeenCalledWith('dict_export_file', {
+      targetPath: '/tmp/vibetype-dict.json',
+    })
+
+    invokeMock.mockRejectedValue('{"code":"E-UNKNOWN","message":"导出失败"}')
+    expect(await store.exportRulesTo('/tmp/vibetype-dict.json')).toBeNull()
+    expect(store.lastError?.message).toBe('导出失败')
+  })
+
+  it('importRulesFrom 传文件路径、返回条数并刷新镜像；失败返回 null', async () => {
+    invokeMock.mockResolvedValue([rule(1, 'f二', 'F2')])
+    const store = useDictStore()
+    await store.ensureLoaded()
+    invokeMock.mockClear()
+
+    invokeMock.mockResolvedValueOnce(1)
+    invokeMock.mockResolvedValue([rule(1, 'f二', 'F2'), rule(2, '回车', '\n')])
+    expect(await store.importRulesFrom('/tmp/dict.json')).toBe(1)
+    expect(invokeMock).toHaveBeenCalledWith('dict_import_file', { path: '/tmp/dict.json' })
+    expect(store.rules).toHaveLength(2)
+
+    invokeMock.mockRejectedValue('{"code":"E-CONFIG-003","message":"超出上限"}')
+    expect(await store.importRulesFrom('/tmp/dict.json')).toBeNull()
+    expect(store.lastError?.code).toBe('E-CONFIG-003')
+  })
+
   it('dict:changed 事件触发重新拉取（多窗口同步）', async () => {
     invokeMock.mockResolvedValue([rule(1, 'f二', 'F2')])
     const store = useDictStore()

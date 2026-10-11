@@ -191,6 +191,96 @@ impl DictService {
         self.persist_and_notify().await
     }
 
+    /// 导出全部规则（JSON 数组字符串；沿用 `ReplaceRule` 现有 serde 字段，
+    /// 与导入对称，便于备份 / 迁移）。
+    ///
+    /// 隐私（NFR-S-02）：导出内容由前端交由用户处置，服务层不落日志。
+    pub async fn export_rules(&self) -> Result<String, AppError> {
+        let rules = self.rules.read().await.clone();
+        serde_json::to_string(&rules)
+            .map_err(|err| AppError::Config(ERR_BAD_RULE, format!("导出序列化失败: {err}")))
+    }
+
+    /// 导入规则：解析校验（错误词非空、长度合法、正确词不超长）、
+    /// 与已有规则及本批内去重（英文不区分大小写）、分配新 ID 入库、
+    /// 持久化并广播 `dict:changed`；返回实际导入条数。
+    pub async fn import_rules(&self, json: &str) -> Result<usize, AppError> {
+        /// 导入输入形态：兼容导出的 ReplaceRule 字段；id 由服务重新分配，忽略。
+        #[derive(Debug, Deserialize)]
+        struct ImportRule {
+            wrong: String,
+            right: String,
+            #[serde(default)]
+            enabled: Option<bool>,
+        }
+        let items: Vec<ImportRule> = serde_json::from_str(json).map_err(|err| {
+            AppError::Config(
+                ERR_BAD_RULE,
+                format!("导入内容不是合法的规则 JSON 数组: {err}"),
+            )
+        })?;
+        let mut rules = self.rules.write().await;
+        let mut pending: Vec<ReplaceRule> = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            let seq = index + 1;
+            let wrong = item.wrong.trim();
+            if wrong.is_empty() {
+                return Err(AppError::Config(
+                    ERR_BAD_RULE,
+                    format!("第 {seq} 条规则错误词为空"),
+                ));
+            }
+            if wrong.chars().count() > 100 {
+                return Err(AppError::Config(
+                    ERR_BAD_RULE,
+                    format!("第 {seq} 条规则错误词过长（最多 100 字）"),
+                ));
+            }
+            if item.right.chars().count() > MAX_RIGHT_LEN {
+                return Err(AppError::Config(
+                    ERR_BAD_RULE,
+                    format!("第 {seq} 条规则正确词过长（最多 {MAX_RIGHT_LEN} 字）"),
+                ));
+            }
+            // 去重：与已有规则及本批已收规则比较（英文不区分大小写）。
+            let normalized = normalize_wrong(wrong);
+            let duplicated = rules
+                .iter()
+                .chain(pending.iter())
+                .any(|rule| normalize_wrong(&rule.wrong) == normalized);
+            if duplicated {
+                continue;
+            }
+            pending.push(ReplaceRule {
+                id: 0, // 入库前统一分配
+                wrong: wrong.to_string(),
+                right: item.right.clone(),
+                enabled: item.enabled.unwrap_or(true),
+            });
+        }
+        if rules.len() + pending.len() > MAX_RULES {
+            return Err(AppError::Config(
+                ERR_RULE_LIMIT,
+                format!(
+                    "导入后将达到 {} 条，超过替换词典上限 {MAX_RULES} 条",
+                    rules.len() + pending.len()
+                ),
+            ));
+        }
+        let imported = pending.len();
+        let mut next_id = self.next_id.write().await;
+        for mut rule in pending {
+            rule.id = *next_id;
+            *next_id += 1;
+            rules.push(rule);
+        }
+        drop(rules);
+        if imported > 0 {
+            self.persist_and_notify().await?;
+        }
+        Ok(imported)
+    }
+
     /// 持久化 + 广播变更（先落盘再广播，多窗口以广播为准刷新）。
     async fn persist_and_notify(&self) -> Result<(), AppError> {
         let rules = self.rules.read().await.clone();
@@ -420,5 +510,105 @@ mod tests {
             .unwrap();
         let event = rx.try_recv().expect("应广播 dict:changed");
         assert!(matches!(event, AppEvent::DictChanged));
+    }
+
+    #[tokio::test]
+    async fn export_import_roundtrip() {
+        let dir = TestDir::new("roundtrip-io");
+        let service = make_service(&dir);
+        service
+            .add_rule("f二".to_string(), "F2".to_string(), true)
+            .await
+            .unwrap();
+        service
+            .add_rule("我的邮箱".to_string(), "dev@example.com".to_string(), false)
+            .await
+            .unwrap();
+
+        // 导出 → 新服务导入（模拟备份 / 迁移）。
+        let json = service.export_rules().await.unwrap();
+        let dir2 = TestDir::new("roundtrip-io-2");
+        let (tx, mut rx) = crate::events::channel();
+        let service2 = DictService::load(&dir2.0, tx).unwrap();
+        let imported = service2.import_rules(&json).await.unwrap();
+        assert_eq!(imported, 2);
+        assert!(matches!(rx.try_recv().unwrap(), AppEvent::DictChanged));
+        let rules = service2.list().await;
+        assert_eq!(rules.len(), 2);
+        // 字段完整保留（含启停状态）。
+        assert_eq!(rules[0].wrong, "f二");
+        assert_eq!(rules[0].right, "F2");
+        assert!(rules[0].enabled);
+        assert!(!rules[1].enabled);
+        // ID 重新分配且持久化续接。
+        let rule = service2
+            .add_rule("新词".to_string(), "新值".to_string(), true)
+            .await
+            .unwrap();
+        assert!(rule.id > rules[1].id);
+    }
+
+    #[tokio::test]
+    async fn import_dedupes_against_existing_and_batch() {
+        let dir = TestDir::new("import-dedup");
+        let service = make_service(&dir);
+        service
+            .add_rule("F二".to_string(), "F2".to_string(), true)
+            .await
+            .unwrap();
+        let json = r#"[
+            {"wrong": "f二", "right": "Fx", "enabled": true},
+            {"wrong": "新词一", "right": "一", "enabled": true},
+            {"wrong": "新词一", "right": "重复批内", "enabled": true},
+            {"wrong": "新词二", "right": "二"}
+        ]"#;
+        let imported = service.import_rules(json).await.unwrap();
+        // 已有（大小写归一重复）+ 批内重复被跳过，导入 2 条。
+        assert_eq!(imported, 2);
+        let rules = service.list().await;
+        assert_eq!(rules.len(), 3);
+        assert!(rules.iter().any(|r| r.wrong == "新词二" && r.enabled));
+    }
+
+    #[tokio::test]
+    async fn import_invalid_json_and_empty_wrong() {
+        let dir = TestDir::new("import-bad");
+        let service = make_service(&dir);
+        // 结构非法：非 JSON。
+        let err = service.import_rules("not json").await.unwrap_err();
+        assert_eq!(err.code(), "E-CONFIG-002");
+        // 结构非法：JSON 但非数组。
+        let err = service.import_rules("{}").await.unwrap_err();
+        assert_eq!(err.code(), "E-CONFIG-002");
+        // 错误词为空。
+        let err = service
+            .import_rules(r#"[{"wrong": "  ", "right": "x"}]"#)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "E-CONFIG-002");
+        assert!(err.to_string().contains("错误词为空"));
+        // 错误消息不含导入文本内容之外的泄漏（仅结构描述）。
+        assert!(service.list().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn import_respects_rule_limit() {
+        let dir = TestDir::new("import-limit");
+        let service = make_service(&dir);
+        // 先填满到上限 - 2。
+        for i in 0..MAX_RULES - 2 {
+            service
+                .add_rule(format!("词{i}"), format!("值{i}"), true)
+                .await
+                .unwrap();
+        }
+        let items: Vec<String> = (0..3)
+            .map(|i| format!(r#"{{"wrong": "导入{i}", "right": "v"}}"#))
+            .collect();
+        let json = format!("[{}]", items.join(","));
+        let err = service.import_rules(&json).await.unwrap_err();
+        assert_eq!(err.code(), format!("E-CONFIG-{ERR_RULE_LIMIT:03}"));
+        // 超限整体拒绝，不产生半导入状态。
+        assert_eq!(service.list().await.len(), MAX_RULES - 2);
     }
 }

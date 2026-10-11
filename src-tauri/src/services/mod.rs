@@ -16,4 +16,5 @@ pub mod model_download;
 pub mod pipeline;
 pub mod post_process;
 pub mod session;
+pub mod stages;
 pub mod update;

@@ -33,3 +33,20 @@ export async function dictDeleteRule(id: number): Promise<void> {
 export async function dictToggleRule(id: number, enabled: boolean): Promise<void> {
   await invoke('dict_toggle_rule', { id, enabled })
 }
+
+/**
+ * 导出全部规则到 targetPath（plugin-dialog 选定的保存路径，后端 dict_export_file）。
+ * 返回导出条数；结构形如 [{ wrong, right, enabled }, ...]。
+ */
+export async function dictExportFile(targetPath: string): Promise<number> {
+  return invoke<number>('dict_export_file', { targetPath })
+}
+
+/**
+ * 从 path 导入规则（plugin-dialog 选定的文件，后端 dict_import_file）；
+ * JSON 结构校验在后端完成，返回导入条数。
+ * 结构非法 / 超限等由后端返回 E-CONFIG-00x。
+ */
+export async function dictImportFile(path: string): Promise<number> {
+  return invoke<number>('dict_import_file', { path })
+}

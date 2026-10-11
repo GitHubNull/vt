@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
-import { useLogStore, PAGE_SIZE } from './log'
+import { useLogStore, PAGE_SIZE, LOG_LEVELS } from './log'
 
 describe('stores/log（T-018 日志中心）', () => {
   beforeEach(() => {
@@ -16,8 +16,21 @@ describe('stores/log（T-018 日志中心）', () => {
     const store = useLogStore()
     expect(store.regex).toBe(false)
     expect(store.caseSensitive).toBe(false)
-    expect(store.levels).toEqual([])
+    expect(store.levels).toEqual(LOG_LEVELS)
     expect(store.dbEnabled).toBe(true)
+  })
+
+  it('级别清空选中 = 不过滤：查询时发送全部级别（避免白屏困惑）', async () => {
+    invokeMock.mockResolvedValue({ entries: [], has_more: false })
+    const store = useLogStore()
+    store.levels = []
+    expect(await store.search()).toBe(true)
+    expect(invokeMock).toHaveBeenCalledWith(
+      'log_query',
+      expect.objectContaining({
+        query: expect.objectContaining({ levels: LOG_LEVELS }),
+      }),
+    )
   })
 
   it('dbEnabled 跟随配置：去掉 database 目标后搜索不可用并清空结果', async () => {

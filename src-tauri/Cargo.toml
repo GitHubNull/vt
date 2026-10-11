@@ -12,6 +12,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+# 单实例锁（PRD 3.15：同时只允许一个主进程；重复启动时聚焦已有设置窗）
+tauri-plugin-single-instance = "2"
 # 全局快捷键（tech/02 2.3 系统能力表；T-004 登记，三平台按住 / 切换双模式）
 tauri-plugin-global-shortcut = "2"
 # 音频采集（tech/02 2.3 系统能力表；T-005 登记，cpal 三平台统一抽象，Linux 需 ALSA）
@@ -53,13 +55,18 @@ rand = "0.8"
 mdns-sd = "0.11"
 base64 = "0.22"
 image = "0.25"
+# 简繁转换（T-011 输出选项：输出繁体中文；zhconv 纯 Rust OpenCC 实现，离线可用）
+zhconv = "0.4"
 zip = "2"
 
 # 平台焦点检测（T-007；仅对应平台编译）；Win32_UI_Input_KeyboardAndMouse / Threading /
-# LibraryLoader 为低级键盘钩子后端（WH_KEYBOARD_LL，修饰键单独作触发键）所需
+# LibraryLoader 为低级键盘钩子后端（WH_KEYBOARD_LL，修饰键单独作触发键）所需；
+# System_Com / Media_Audio(_Endpoints) 为录音时静音系统扬声器（IAudioEndpointVolume）所需
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
   "Win32_UI_Input_KeyboardAndMouse",

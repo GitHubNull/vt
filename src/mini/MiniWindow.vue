@@ -31,6 +31,9 @@ const lastResult = ref('')
 const feedbackText = ref('')
 /** 录音中（recording:state 驱动，互斥判定的权威状态）。 */
 const recording = ref(false)
+/** 复制结果提示（空串 = 不显示）。 */
+const copyToast = ref('')
+let copyTimer = 0
 
 const statusText = computed(() => {
   if (phase.value === 'feedback') return feedbackText.value
@@ -91,17 +94,61 @@ function showFeedback(text, durationMs) {
   }, durationMs)
 }
 
-onMounted(async () => {
-  levelRaf = requestAnimationFrame(pumpLevel)
+/** 从后端配置刷新触发键显示与触发模式（保存快捷键后经 config:changed 同步，F-INPUT-06）。 */
+async function reloadTriggerConfig() {
   try {
     const config = await getConfig()
     mode.value = config.hotkey.mode
     triggerName.value = formatCombo(config.hotkey.trigger, t.hotkey.keys)
   } catch {
-    /* 配置读取失败：保留默认按住模式与空键名 */
+    /* 配置读取失败：保留现状 */
   }
+}
+
+/** 剪贴板写入：优先异步 API，失败回退隐藏 textarea + execCommand。 */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    try {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.setAttribute('readonly', '')
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      const ok = document.execCommand('copy')
+      area.remove()
+      return ok
+    } catch {
+      return false
+    }
+  }
+}
+
+/** 复制最近结果并给出轻提示（无焦点兜底场景，PRD 2.8 / F-INPUT-09）。 */
+async function copyLastResult() {
+  const text = lastResult.value
+  if (!text) return
+  const ok = await copyText(text)
+  copyToast.value = ok ? t.mini.copySuccess : t.mini.copyFailed
+  window.clearTimeout(copyTimer)
+  copyTimer = window.setTimeout(() => {
+    copyToast.value = ''
+  }, 1500)
+}
+
+onMounted(async () => {
+  levelRaf = requestAnimationFrame(pumpLevel)
+  await reloadTriggerConfig()
 
   unlisteners.push(
+    await listen(EVENTS.configChanged, () => {
+      // 设置页保存触发键后后端广播：立即刷新小窗快捷键提示（tech/03 3.4 事件总线）。
+      void reloadTriggerConfig()
+    }),
     await listen(EVENTS.recordingState, (event) => {
       switch (event.payload.state) {
         case 'recording':
@@ -148,6 +195,7 @@ onMounted(async () => {
 onUnmounted(() => {
   cancelAnimationFrame(levelRaf)
   window.clearTimeout(feedbackTimer)
+  window.clearTimeout(copyTimer)
   for (const unlisten of unlisteners) unlisten()
 })
 </script>
@@ -184,8 +232,23 @@ onUnmounted(() => {
 
     <p v-if="lastResult" class="last-result">
       <span class="last-label">{{ t.mini.lastResult }}</span>
-      <span class="last-text">{{ lastResult }}</span>
+      <span class="last-text" :title="lastResult">{{ lastResult }}</span>
+      <button
+        type="button"
+        class="copy-btn"
+        :aria-label="t.mini.copy"
+        :title="t.mini.copy"
+        @click="copyLastResult"
+      >
+        <svg viewBox="0 0 24 24" class="copy-icon" aria-hidden="true">
+          <path
+            d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z"
+          />
+        </svg>
+      </button>
     </p>
+
+    <div v-if="copyToast" class="mini-toast" role="status">{{ copyToast }}</div>
 
     <div class="footer">
       <button
@@ -206,6 +269,7 @@ onUnmounted(() => {
 
 <style scoped>
 .mini-root {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -262,7 +326,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 150ms ease, color 150ms ease, transform 150ms ease;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
 }
 
 .mic-btn:hover {
@@ -320,11 +387,11 @@ onUnmounted(() => {
   border-color: #fca5a5;
 }
 
-/* 最近结果（单行，PRD 4.2.2） */
+/* 最近结果（单行，PRD 4.2.2）；无焦点兜底结果须可复制（验收 2.8） */
 .last-result {
   display: flex;
   gap: 6px;
-  align-items: baseline;
+  align-items: center;
   width: 100%;
   margin: 12px 0 0;
   padding: 6px 10px;
@@ -333,6 +400,8 @@ onUnmounted(() => {
   background: #fff;
   border: 1px solid #eceef1;
   font-size: 12px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .last-label {
@@ -341,10 +410,56 @@ onUnmounted(() => {
 }
 
 .last-text {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #374151;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 复制按钮：行内小方块，与底部方形按钮同风格 */
+.copy-btn {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #6b7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.copy-btn:hover {
+  color: #3b6ff6;
+  border-color: #c7d6fb;
+}
+
+.copy-icon {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+/* 复制轻提示（自动消失，不抢焦点） */
+.mini-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 12px;
+  background: rgba(31, 35, 41, 0.85);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .footer {

@@ -3,7 +3,8 @@
  * 词典 › 替换词典（T-011，F-DICT-01、PRD 3.4.1）。
  * 对照原型 PixPin_2026-10-09_21-32-16.png：说明文案、计数、添加 / 保存、
  * 错误词 → 正确词列表、行内启停与删除；搜索框为原型新增项。
- * 删除确认走 @tauri-apps/plugin-dialog（tech/03 3.3）。
+ * 删除确认走 @tauri-apps/plugin-dialog（tech/03 3.3）；
+ * 导入 / 导出文件路径由系统原生对话框选定（plugin-dialog save / open）。
  */
 import { computed, onMounted, ref } from 'vue'
 import Button from 'primevue/button'
@@ -14,9 +15,10 @@ import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Textarea from 'primevue/textarea'
 import ToggleSwitch from 'primevue/toggleswitch'
-import { confirm } from '@tauri-apps/plugin-dialog'
+import { confirm, open, save } from '@tauri-apps/plugin-dialog'
 import { useDictStore, MAX_RULES } from '../../stores/dict'
 import { useConfigStore } from '../../stores/config'
+import { toAppError } from '../../api/client'
 import { t } from '../../i18n'
 
 const store = useDictStore()
@@ -42,12 +44,82 @@ const filteredRules = computed(() => {
   const query = search.value.trim().toLowerCase()
   if (!query) return store.rules
   return store.rules.filter(
-    (rule) =>
-      rule.wrong.toLowerCase().includes(query) || rule.right.toLowerCase().includes(query),
+    (rule) => rule.wrong.toLowerCase().includes(query) || rule.right.toLowerCase().includes(query),
   )
 })
 
 const counterText = computed(() => `${store.rules.length} / ${MAX_RULES}`)
+
+/** 导出 / 导入状态与提示（{ ok, text }）。 */
+const exporting = ref(false)
+const importing = ref(false)
+const ioNotice = ref(null)
+
+/** 导出：系统原生保存对话框选定路径 → 后端写文件；取消对话框则静默返回。 */
+async function onExport() {
+  exporting.value = true
+  ioNotice.value = null
+  try {
+    const path = await save({
+      title: t.dict.replace.exportTitle,
+      defaultPath: 'vibetype-dict.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (!path) return
+    const count = await store.exportRulesTo(path)
+    if (count === null) {
+      ioNotice.value = { ok: false, text: ioErrorText('export') }
+      return
+    }
+    ioNotice.value = {
+      ok: true,
+      text: t.dict.replace.exportDone
+        .replace('{count}', String(count))
+        .replace('{path}', path),
+    }
+  } catch (error) {
+    ioNotice.value = {
+      ok: false,
+      text: `${t.dict.replace.exportFailed}（${t.common.errorCode} ${toAppError(error).code}）`,
+    }
+  } finally {
+    exporting.value = false
+  }
+}
+
+/** 导入：系统原生打开对话框选定 JSON → 后端校验并导入；取消对话框则静默返回。 */
+async function onImport() {
+  importing.value = true
+  ioNotice.value = null
+  try {
+    const path = await open({
+      title: t.dict.replace.importTitle,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (!path) return
+    const count = await store.importRulesFrom(path)
+    if (count === null) {
+      // JSON 结构非法等失败：展示后端返回的错误信息。
+      ioNotice.value = { ok: false, text: ioErrorText('import') }
+      return
+    }
+    ioNotice.value = { ok: true, text: t.dict.replace.importDone.replace('{count}', String(count)) }
+  } catch (error) {
+    ioNotice.value = {
+      ok: false,
+      text: `${t.dict.replace.importFailed}（${t.common.errorCode} ${toAppError(error).code}）`,
+    }
+  } finally {
+    importing.value = false
+  }
+}
+
+/** 失败提示：优先取 store 记录的后端错误信息（含结构非法），无则给通用文案。 */
+function ioErrorText(kind) {
+  const generic = kind === 'export' ? t.dict.replace.exportFailed : t.dict.replace.importFailed
+  const err = store.lastError
+  return err ? `${generic}：${err.message}（${t.common.errorCode} ${err.code}）` : generic
+}
 
 const errorText = computed(() =>
   store.lastError
@@ -118,6 +190,22 @@ function updateDictEnabled(enabled) {
             :disabled="store.isFull"
             @click="openAdd"
           />
+          <Button
+            type="button"
+            icon="pi pi-upload"
+            :label="exporting ? t.dict.replace.exporting : t.dict.replace.export"
+            :loading="exporting"
+            severity="secondary"
+            @click="onExport"
+          />
+          <Button
+            type="button"
+            icon="pi pi-download"
+            :label="importing ? t.dict.replace.importing : t.dict.replace.import"
+            :loading="importing"
+            severity="secondary"
+            @click="onImport"
+          />
           <ToggleSwitch
             :model-value="configStore.sections.dict.enabled"
             :aria-label="t.dict.replace.masterToggle"
@@ -128,6 +216,9 @@ function updateDictEnabled(enabled) {
         <p v-if="store.isFull" class="dict-hint">{{ t.dict.replace.limitHint }}</p>
         <p v-if="!configStore.sections.dict.enabled" class="dict-hint">
           {{ t.dict.replace.disabledHint }}
+        </p>
+        <p v-if="ioNotice" class="dict-hint" :class="{ 'dict-hint-error': !ioNotice.ok }">
+          {{ ioNotice.text }}
         </p>
 
         <DataTable
@@ -187,7 +278,9 @@ function updateDictEnabled(enabled) {
       </div>
     </section>
 
-    <Message v-if="store.lastError" severity="error" class="settings-error">{{ errorText }}</Message>
+    <Message v-if="store.lastError" severity="error" class="settings-error">{{
+      errorText
+    }}</Message>
 
     <Dialog
       v-model:visible="editorVisible"
@@ -211,8 +304,18 @@ function updateDictEnabled(enabled) {
         <p class="dict-editor-hint">{{ t.dict.replace.emptyRightHint }}</p>
       </div>
       <template #footer>
-        <Button type="button" severity="secondary" :label="t.common.cancel" @click="editor = null" />
-        <Button type="button" :label="t.common.confirm" :disabled="!editor?.wrong.trim()" @click="saveEditor" />
+        <Button
+          type="button"
+          severity="secondary"
+          :label="t.common.cancel"
+          @click="editor = null"
+        />
+        <Button
+          type="button"
+          :label="t.common.confirm"
+          :disabled="!editor?.wrong.trim()"
+          @click="saveEditor"
+        />
       </template>
     </Dialog>
   </div>
@@ -250,6 +353,10 @@ function updateDictEnabled(enabled) {
   font-size: 12.5px;
   color: var(--vt-color-warning);
   border-bottom: 1px solid var(--vt-color-border);
+}
+
+.dict-hint-error {
+  color: var(--vt-color-error);
 }
 
 .dict-arrow {

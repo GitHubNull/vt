@@ -13,7 +13,7 @@ import ToggleSwitch from 'primevue/toggleswitch'
 import { save } from '@tauri-apps/plugin-dialog'
 import SettingsRow from '../../components/SettingsRow.vue'
 import { useConfigStore } from '../../stores/config'
-import { useLogStore } from '../../stores/log'
+import { LOG_LEVELS, useLogStore } from '../../stores/log'
 import { toAppError } from '../../api/client'
 import { t } from '../../i18n'
 import {
@@ -26,11 +26,10 @@ import {
 const configStore = useConfigStore()
 const store = useLogStore()
 
-/** 级别过滤选项（PRD 3.13：DEBUG / INFO / WARN / ERROR）。 */
-const LEVEL_OPTIONS = ['DEBUG', 'INFO', 'WARN', 'ERROR']
-
 const targets = computed(() => configStore.sections.log.targets)
 const targetHint = ref('')
+/** 拒绝全关时的弹回计数：变更 key 强制 ToggleSwitch 重挂载，保证视觉弹回（验收 4.7.6）。 */
+const rejectTick = ref({ file: 0, database: 0 })
 
 onMounted(() => {
   void configStore.ensureLoaded()
@@ -56,7 +55,14 @@ function segmentsOf(body) {
 // 过滤条件变化即重新查询（防抖 300ms，避免输入过程频繁 invoke）。
 let debounceTimer = 0
 watch(
-  () => [store.keyword, store.regex, store.caseSensitive, store.levels, store.fromLocal, store.toLocal],
+  () => [
+    store.keyword,
+    store.regex,
+    store.caseSensitive,
+    store.levels,
+    store.fromLocal,
+    store.toLocal,
+  ],
   () => {
     if (!store.dbEnabled) return
     window.clearTimeout(debounceTimer)
@@ -71,6 +77,8 @@ async function toggleTarget(target, enabled) {
   // F-LOG-02：至少保留一项（后端 E-CONFIG-004 兜底，前端先行提示）。
   if (next.length === 0) {
     targetHint.value = t.log.targets.needOne
+    // 拒绝本次勾选：强制重挂载使开关弹回"开"，保证至少一项常开。
+    rejectTick.value = { ...rejectTick.value, [target]: rejectTick.value[target] + 1 }
     return
   }
   const ok = await store.updateTargets(next)
@@ -85,7 +93,9 @@ function clearKeyword() {
 }
 
 const errorText = computed(() =>
-  store.lastError ? `${store.lastError.message}（${t.common.errorCode} ${store.lastError.code}）` : '',
+  store.lastError
+    ? `${store.lastError.message}（${t.common.errorCode} ${store.lastError.code}）`
+    : '',
 )
 
 const exportMessage = ref(null)
@@ -131,16 +141,15 @@ async function onExport() {
       <div class="settings-card">
         <SettingsRow :title="t.log.targets.file.label" :desc="t.log.targets.file.desc">
           <ToggleSwitch
+            :key="`log-target-file-${rejectTick.file}`"
             :model-value="targets.includes('file')"
             :aria-label="t.log.targets.file.label"
             @update:model-value="(v) => toggleTarget('file', v)"
           />
         </SettingsRow>
-        <SettingsRow
-          :title="t.log.targets.database.label"
-          :desc="t.log.targets.database.desc"
-        >
+        <SettingsRow :title="t.log.targets.database.label" :desc="t.log.targets.database.desc">
           <ToggleSwitch
+            :key="`log-target-database-${rejectTick.database}`"
             :model-value="targets.includes('database')"
             :aria-label="t.log.targets.database.label"
             @update:model-value="(v) => toggleTarget('database', v)"
@@ -153,7 +162,8 @@ async function onExport() {
           class="settings-error"
           :closable="false"
         >
-          {{ configStore.lastError.message }}（{{ t.common.errorCode }} {{ configStore.lastError.code }}）
+          {{ configStore.lastError.message }}（{{ t.common.errorCode }}
+          {{ configStore.lastError.code }}）
         </Message>
       </div>
     </section>
@@ -191,7 +201,10 @@ async function onExport() {
                 <span>{{ t.log.search.regex }}</span>
               </label>
               <label class="log-toggle">
-                <ToggleSwitch v-model="store.caseSensitive" :aria-label="t.log.search.caseSensitive" />
+                <ToggleSwitch
+                  v-model="store.caseSensitive"
+                  :aria-label="t.log.search.caseSensitive"
+                />
                 <span>{{ t.log.search.caseSensitive }}</span>
               </label>
             </div>
@@ -217,9 +230,10 @@ async function onExport() {
             <span class="log-filter-label">{{ t.log.search.levels }}</span>
             <MultiSelect
               v-model="store.levels"
-              :options="LEVEL_OPTIONS"
+              :options="LOG_LEVELS"
               class="log-levels"
               :aria-label="t.log.search.levels"
+              show-toggle-all
               :pt="{ overlay: { class: 'log-levels-overlay' } }"
             >
               <template #option="slotProps">
@@ -387,6 +401,19 @@ async function onExport() {
   border-radius: var(--vt-radius-control);
   box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.15);
   color: var(--vt-color-text);
+}
+
+/* 全选开关头部（PrimeVue 4 toggle-all 头部，随 overlay teleport 到 body） */
+:global(.log-levels-overlay .p-multiselect-header) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vt-color-border);
+}
+
+:global(.log-levels-overlay .p-multiselect-header .p-checkbox) {
+  cursor: pointer;
 }
 
 :global(.log-levels-overlay .p-multiselect-option) {

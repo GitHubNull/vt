@@ -287,6 +287,13 @@ body {
   margin-top: var(--vt-spacing-lg);
 }
 
+/* PrimeVue Message 文本在窄窗口下默认单行裁切，允许换行完整显示（如"请下载模型后再使用语音输入"） */
+.settings-error .p-message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* 数据目录等只读路径 */
 .dir-path {
   min-width: 280px;

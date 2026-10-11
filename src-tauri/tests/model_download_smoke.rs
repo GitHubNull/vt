@@ -69,7 +69,18 @@ async fn smoke_download_int8_model_from_mirror_and_verify_hash() {
 
     let size = std::fs::metadata(&dest).expect("smoke test").len();
     assert_eq!(size, meta.size_bytes, "镜像文件大小与内置元数据不一致");
-    verify_model_hash(&dest, meta).expect("镜像源 SHA-256 校验失败");
+    // 词表文件同样下载落盘：完整性校验覆盖 model.onnx + tokens.txt（验收 4.6.4）。
+    model_download::download_file(
+        &client,
+        &model_download::mirror_files(meta)[1].url,
+        &dir.join(TOKENS_NAME),
+        0,
+        model_download::DEFAULT_THREADS,
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("tokens.txt 下载失败");
+    verify_model_hash(&dir, meta).expect("镜像源 SHA-256 校验失败");
     eprintln!(
         "镜像源下载 {size} 字节耗时 {:?}（平均 {:.1} MB/s）",
         elapsed,

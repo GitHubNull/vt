@@ -265,14 +265,16 @@ export const zhCN = {
       etaRemaining: '剩余约 {time}',
       downloadSettings: '下载设置',
       sourceLabel: '下载源',
-      sourceDesc: '默认使用国内镜像源（与官方文件一致，下载后均做完整性校验）；镜像不可用时自动回退官方源。',
+      sourceDesc:
+        '默认使用国内镜像源（与官方文件一致，下载后均做完整性校验）；镜像不可用时自动回退官方源。',
       sourceMirror: '镜像源（国内推荐）',
       sourceOfficial: '官方源（GitHub）',
       proxyLabel: '下载代理',
       proxyDesc: '留空为直连。格式如 http://127.0.0.1:7890；代理只作用于模型下载。',
       proxyPlaceholder: '留空直连，如 http://127.0.0.1:7890',
       dirLabel: '模型存储位置',
-      dirDesc: '默认保存在安装目录下的 models 文件夹；安装目录不可写时自动改用数据目录。更改后新下载的模型放入新位置。',
+      dirDesc:
+        '默认保存在安装目录下的 models 文件夹；安装目录不可写时自动改用数据目录。更改后新下载的模型放入新位置。',
       dirChoose: '更改',
       dirReset: '恢复默认',
       dirChooseTitle: '选择模型存储目录',
@@ -305,6 +307,16 @@ export const zhCN = {
       deleteMark: '删除该词',
       deleteTitle: '删除规则',
       deleteConfirm: '确定删除规则“{wrong}”吗？',
+      export: '导出',
+      import: '导入',
+      exporting: '导出中…',
+      importing: '导入中…',
+      exportTitle: '导出替换词典',
+      importTitle: '导入替换词典',
+      exportDone: '已导出 {count} 条替换规则到 {path}。',
+      exportFailed: '导出失败',
+      importDone: '已导入 {count} 条替换规则。',
+      importFailed: '导入失败',
     },
   },
   log: {
@@ -372,6 +384,26 @@ export const zhCN = {
       title: '更新日志',
       desc: '查看版本更新记录。',
       view: '查看',
+      versions: [
+        {
+          version: 'v0.1.10',
+          date: '2026-10-11',
+          items: ['修复 Windows 下右 Alt 触发键偶发无响应的问题。'],
+        },
+        {
+          version: 'v0.1.9',
+          date: '2026-10-10',
+          items: [
+            '修复模型下载进度卡在 0% 与取消下载后残留假进度的问题。',
+            '日志关键词输入框新增一键清除按钮。',
+          ],
+        },
+        {
+          version: 'v0.1.8',
+          date: '2026-10-10',
+          items: ['修复日志查看列表高度自适应与级别筛选下拉面板无底色的问题。'],
+        },
+      ],
     },
     exportLogs: {
       title: '导出日志',
@@ -434,6 +466,9 @@ export const zhCN = {
     },
     cancel: '取消录音',
     lastResult: '上次结果',
+    copy: '复制',
+    copySuccess: '已复制到剪贴板',
+    copyFailed: '复制失败，请手动选择文本复制',
     openSettings: '打开设置',
   },
   float: {

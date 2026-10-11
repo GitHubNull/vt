@@ -235,11 +235,14 @@ export const enUS: Messages = {
       desc: 'Manage local speech recognition models: download, switch and delete. Models stay on this device; recognition runs fully offline.',
       group: 'Recognition Models',
       noModelTitle: 'No recognition model yet',
-      noModelDesc: 'Voice input needs a local recognition model. Pick a tier below to download. Models stay on this device.',
+      noModelDesc:
+        'Voice input needs a local recognition model. Pick a tier below to download. Models stay on this device.',
       tierAccuracy: 'Accuracy first',
       tierSpeed: 'Speed first',
-      tierAccuracyDesc: 'Higher accuracy; larger model with slower load and inference. Suitable for higher-end computers.',
-      tierSpeedDesc: 'Smaller model with faster inference, suitable for low-end computers; slightly lower accuracy.',
+      tierAccuracyDesc:
+        'Higher accuracy; larger model with slower load and inference. Suitable for higher-end computers.',
+      tierSpeedDesc:
+        'Smaller model with faster inference, suitable for low-end computers; slightly lower accuracy.',
       sizeLabel: 'Model size',
       languagesLabel: 'Languages',
       statusActive: 'In use',
@@ -247,7 +250,8 @@ export const enUS: Messages = {
       statusDownloaded: 'Downloaded',
       statusMissing: 'Not downloaded',
       statusInvalid: 'Corrupted',
-      invalidHint: 'Model file verification failed (possibly modified externally). Delete and download again.',
+      invalidHint:
+        'Model file verification failed (possibly modified externally). Delete and download again.',
       download: 'Download',
       cancelDownload: 'Cancel Download',
       activate: 'Switch to this model',
@@ -267,14 +271,17 @@ export const enUS: Messages = {
       etaRemaining: '~{time} left',
       downloadSettings: 'Download Settings',
       sourceLabel: 'Download Source',
-      sourceDesc: 'Defaults to the domestic mirror (identical files to the official source; both are integrity-checked after download). Falls back to the official source automatically if the mirror is unavailable.',
+      sourceDesc:
+        'Defaults to the domestic mirror (identical files to the official source; both are integrity-checked after download). Falls back to the official source automatically if the mirror is unavailable.',
       sourceMirror: 'Mirror (recommended in China)',
       sourceOfficial: 'Official (GitHub)',
       proxyLabel: 'Download Proxy',
-      proxyDesc: 'Leave empty for a direct connection, e.g. http://127.0.0.1:7890. The proxy only applies to model downloads.',
+      proxyDesc:
+        'Leave empty for a direct connection, e.g. http://127.0.0.1:7890. The proxy only applies to model downloads.',
       proxyPlaceholder: 'Direct connection by default, e.g. http://127.0.0.1:7890',
       dirLabel: 'Model Storage Location',
-      dirDesc: 'By default models are stored in the "models" folder next to the app; if that location is not writable, the data directory is used instead. New downloads go to the new location after changing.',
+      dirDesc:
+        'By default models are stored in the "models" folder next to the app; if that location is not writable, the data directory is used instead. New downloads go to the new location after changing.',
       dirChoose: 'Change',
       dirReset: 'Reset to Default',
       dirChooseTitle: 'Choose Model Storage Directory',
@@ -307,6 +314,16 @@ export const enUS: Messages = {
       deleteMark: 'Delete this word',
       deleteTitle: 'Delete Rule',
       deleteConfirm: 'Delete rule "{wrong}"?',
+      export: 'Export',
+      import: 'Import',
+      exporting: 'Exporting…',
+      importing: 'Importing…',
+      exportTitle: 'Export Replace Dictionary',
+      importTitle: 'Import Replace Dictionary',
+      exportDone: 'Exported {count} rules to {path}.',
+      exportFailed: 'Export failed',
+      importDone: 'Imported {count} rules.',
+      importFailed: 'Import failed',
     },
   },
   log: {
@@ -375,6 +392,28 @@ export const enUS: Messages = {
       title: 'Changelog',
       desc: 'View version release notes.',
       view: 'View',
+      versions: [
+        {
+          version: 'v0.1.10',
+          date: '2026-10-11',
+          items: ['Fixed the occasional unresponsive Right Alt trigger key on Windows.'],
+        },
+        {
+          version: 'v0.1.9',
+          date: '2026-10-10',
+          items: [
+            'Fixed model download progress stuck at 0% and stale fake progress after cancelling a download.',
+            'Added a one-click clear button to the log keyword input.',
+          ],
+        },
+        {
+          version: 'v0.1.8',
+          date: '2026-10-10',
+          items: [
+            'Fixed the log viewer list height adaptation and the level filter dropdown background.',
+          ],
+        },
+      ],
     },
     exportLogs: {
       title: 'Export Logs',
@@ -425,7 +464,8 @@ export const enUS: Messages = {
     },
   },
   notices: {
-    configRecovered: 'The config file was corrupted and has been restored from the last good copy or defaults.',
+    configRecovered:
+      'The config file was corrupted and has been restored from the last good copy or defaults.',
   },
   mini: {
     status: {
@@ -437,6 +477,9 @@ export const enUS: Messages = {
     },
     cancel: 'Cancel recording',
     lastResult: 'Last result',
+    copy: 'Copy',
+    copySuccess: 'Copied to clipboard',
+    copyFailed: 'Copy failed. Please select the text and copy it manually.',
     openSettings: 'Open settings',
   },
   float: {

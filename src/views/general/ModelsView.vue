@@ -6,7 +6,7 @@
  * 删除（plugin-dialog 确认，删除激活模型给出回退提示）；
  * 下载设置：下载源（镜像默认 / 官方）、下载代理、模型存储位置（plugin-dialog 选择）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import Badge from 'primevue/badge'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
@@ -45,7 +45,10 @@ function formatBytes(bytes) {
 
 function progressPercent(model) {
   if (!model.progress || !model.progress.total_bytes) return 0
-  return Math.min(100, Math.round((model.progress.downloaded_bytes / model.progress.total_bytes) * 100))
+  return Math.min(
+    100,
+    Math.round((model.progress.downloaded_bytes / model.progress.total_bytes) * 100),
+  )
 }
 
 /** 实时速度文本（12 MB/s 量级）；无进展时为 "—"。 */
@@ -80,6 +83,43 @@ function updateAsr(patch) {
   })
 }
 
+// ---- 下载代理：本地草稿 + 失焦提交（验收 4.6.8） ----
+// 根因：后端只接受空串或 http(s):// 前缀的代理地址（config_store.rs 校验），
+// 逐键写配置时中间值（如 "h"、"ht"）被后端拒绝 → 乐观值回滚 → 输入框永远打不了字。
+// 改为编辑本地草稿、失焦才写盘；被拒绝时回显已生效值并展示后端错误。
+const proxyDraft = ref('')
+/** 编辑中标记：聚焦期间不回写草稿，避免覆盖正在输入的内容。 */
+let proxyEditing = false
+
+watch(
+  () => configStore.sections.asr.download_proxy,
+  (value) => {
+    if (!proxyEditing) proxyDraft.value = value ?? ''
+  },
+  { immediate: true },
+)
+
+function onProxyFocus() {
+  proxyEditing = true
+}
+
+async function onProxyBlur() {
+  proxyEditing = false
+  const value = proxyDraft.value.trim()
+  const current = configStore.sections.asr.download_proxy ?? ''
+  if (value === current) return
+  const ok = await configStore.updateSection('asr', {
+    ...configStore.sections.asr,
+    download_proxy: value || null,
+  })
+  if (ok) {
+    void store.refresh()
+  } else {
+    // 后端校验拒绝：回显已生效值（错误信息经 configStore.lastError 展示）。
+    proxyDraft.value = configStore.sections.asr.download_proxy ?? ''
+  }
+}
+
 async function chooseModelsDir() {
   try {
     const dir = await open({ directory: true, title: t.general.models.dirChooseTitle })
@@ -105,10 +145,10 @@ async function onCancel(model) {
 }
 
 async function onActivate(model) {
-  const ok = await confirm(
-    t.general.models.switchConfirm.replace('{name}', model.name),
-    { title: t.general.models.switchTitle, kind: 'info' },
-  )
+  const ok = await confirm(t.general.models.switchConfirm.replace('{name}', model.name), {
+    title: t.general.models.switchTitle,
+    kind: 'info',
+  })
   if (!ok) return
   switchingId.value = model.id
   try {
@@ -141,11 +181,20 @@ async function onDelete(model) {
       <strong>{{ t.general.models.noModelTitle }}</strong>
       <p class="models-no-model-desc">{{ t.general.models.noModelDesc }}</p>
     </Message>
-    <Message v-if="store.notice" severity="info" class="settings-error" @close="store.notice = null">
+    <Message
+      v-if="store.notice"
+      severity="info"
+      class="settings-error"
+      @close="store.notice = null"
+    >
       {{ store.notice }}
     </Message>
     <Message v-if="store.lastError" severity="error" class="settings-error" :closable="false">
       {{ errorText(t.general.models.loadFailedHint) }}
+    </Message>
+    <Message v-if="configStore.lastError" severity="error" class="settings-error" :closable="false">
+      {{ configStore.lastError.message }}（{{ t.common.errorCode }}
+      {{ configStore.lastError.code }}）
     </Message>
 
     <section class="settings-group">
@@ -154,7 +203,9 @@ async function onDelete(model) {
         <div class="model-head">
           <span class="model-name">{{ model.name }}</span>
           <Badge
-            :value="model.tier === 'accuracy' ? t.general.models.tierAccuracy : t.general.models.tierSpeed"
+            :value="
+              model.tier === 'accuracy' ? t.general.models.tierAccuracy : t.general.models.tierSpeed
+            "
             :severity="model.tier === 'accuracy' ? 'info' : 'secondary'"
           />
           <Badge
@@ -170,7 +221,11 @@ async function onDelete(model) {
           />
         </div>
         <p class="model-desc">
-          {{ model.tier === 'accuracy' ? t.general.models.tierAccuracyDesc : t.general.models.tierSpeedDesc }}
+          {{
+            model.tier === 'accuracy'
+              ? t.general.models.tierAccuracyDesc
+              : t.general.models.tierSpeedDesc
+          }}
         </p>
         <p class="model-meta">
           <span>{{ t.general.models.languagesLabel }}：{{ model.languages }}</span>
@@ -184,7 +239,10 @@ async function onDelete(model) {
         <div v-if="store.statusOf(model) === 'downloading'" class="model-actions">
           <ProgressBar :value="progressPercent(model)" class="model-progress" />
           <span class="model-progress-text">{{ progressPercent(model) }}%</span>
-          <span class="model-speed">{{ speedText(model) }}<template v-if="etaText(model)"> · {{ etaText(model) }}</template></span>
+          <span class="model-speed"
+            >{{ speedText(model)
+            }}<template v-if="etaText(model)"> · {{ etaText(model) }}</template></span
+          >
           <Button
             type="button"
             severity="secondary"
@@ -194,7 +252,12 @@ async function onDelete(model) {
         </div>
         <div v-else class="model-actions">
           <template v-if="store.statusOf(model) === 'missing'">
-            <Button type="button" icon="pi pi-download" :label="t.general.models.download" @click="onDownload(model)" />
+            <Button
+              type="button"
+              icon="pi pi-download"
+              :label="t.general.models.download"
+              @click="onDownload(model)"
+            />
           </template>
           <template v-if="store.statusOf(model) === 'downloaded'">
             <Button
@@ -230,10 +293,7 @@ async function onDelete(model) {
     <section class="settings-group">
       <h3 class="settings-group-title">{{ t.general.models.downloadSettings }}</h3>
       <div class="settings-card">
-        <SettingsRow
-          :title="t.general.models.sourceLabel"
-          :desc="t.general.models.sourceDesc"
-        >
+        <SettingsRow :title="t.general.models.sourceLabel" :desc="t.general.models.sourceDesc">
           <Select
             class="model-source-select"
             :model-value="configStore.sections.asr.model_source"
@@ -244,24 +304,24 @@ async function onDelete(model) {
             @update:model-value="(v) => updateAsr({ model_source: v })"
           />
         </SettingsRow>
-        <SettingsRow
-          :title="t.general.models.proxyLabel"
-          :desc="t.general.models.proxyDesc"
-        >
+        <SettingsRow :title="t.general.models.proxyLabel" :desc="t.general.models.proxyDesc">
           <InputText
+            v-model="proxyDraft"
             class="model-proxy-input"
-            :model-value="configStore.sections.asr.download_proxy ?? ''"
             :placeholder="t.general.models.proxyPlaceholder"
             :aria-label="t.general.models.proxyLabel"
-            @update:model-value="(v) => updateAsr({ download_proxy: v || null })"
+            @focus="onProxyFocus"
+            @blur="onProxyBlur"
           />
         </SettingsRow>
-        <SettingsRow
-          :title="t.general.models.dirLabel"
-          :desc="t.general.models.dirDesc"
-        >
+        <SettingsRow :title="t.general.models.dirLabel" :desc="t.general.models.dirDesc">
           <div class="dir-row">
-            <InputText readonly class="dir-path" :model-value="effectiveModelsDir" :aria-label="t.general.models.dirLabel" />
+            <InputText
+              readonly
+              class="dir-path"
+              :model-value="effectiveModelsDir"
+              :aria-label="t.general.models.dirLabel"
+            />
             <Button
               type="button"
               severity="secondary"

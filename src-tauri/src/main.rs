@@ -22,6 +22,15 @@ fn main() {
     // NFR-P-08 冷启动埋点起点：进程启动到托盘可见的耗时。
     let process_start = std::time::Instant::now();
     tauri::Builder::default()
+        // 单实例：第二个进程在此退出，回调在既有实例内执行（PRD 3.15）。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tracing::info!("检测到重复启动，已忽略第二个实例");
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -82,6 +91,12 @@ fn main() {
             commands::dict::dict_update_rule,
             commands::dict::dict_delete_rule,
             commands::dict::dict_toggle_rule,
+            // 词典导入 / 导出（备份 / 迁移）。
+            commands::dict::dict_export,
+            commands::dict::dict_import,
+            // 词典文件导入 / 导出（前端文件对话框对接）。
+            commands::dict::dict_export_file,
+            commands::dict::dict_import_file,
             // T-018 日志中心。
             commands::log::log_query,
             commands::log::log_export,
