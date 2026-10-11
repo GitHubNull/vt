@@ -65,7 +65,12 @@ pub fn parse_accelerator(spec: &str) -> Result<Shortcut, HotkeyError> {
         return Err(HotkeyError::MouseKeyUnsupported(spec.to_string()));
     }
     let tokens: Vec<&str> = spec.split('+').map(str::trim).collect();
-    if tokens.iter().any(|token| token.is_empty()) {
+    // Unidentified：部分键盘布局（右 Alt 被映射为 AltGr）下 webview 会产生该
+    // code，keyboard-types 虽能解析但对应不到任何物理键，必须按非法串拒绝（E-HOTKEY-002）。
+    if tokens
+        .iter()
+        .any(|token| token.is_empty() || *token == "Unidentified")
+    {
         return Err(HotkeyError::InvalidAccelerator(spec.to_string()));
     }
     let (key_token, modifier_tokens) = tokens
@@ -300,6 +305,15 @@ mod tests {
         ));
         assert!(matches!(
             parse_accelerator("ControlLeft++Space"),
+            Err(HotkeyError::InvalidAccelerator(_))
+        ));
+    }
+
+    #[test]
+    fn parse_unidentified_is_invalid() {
+        // 右 Alt 被映射为 AltGr 的键盘布局会录出 Unidentified，按非法串拒绝（E-HOTKEY-002）。
+        assert!(matches!(
+            parse_accelerator("AltLeft+Unidentified"),
             Err(HotkeyError::InvalidAccelerator(_))
         ));
     }

@@ -42,6 +42,17 @@ describe('utils/hotkey（T-013 快捷键录制）', () => {
     )
   })
 
+  it('Linux 默认录音键：AltLeft+KeyR（左 Alt 组合，不受右 Alt AltGr 映射影响）', () => {
+    expect(comboFromKeyEvent(key('KeyR', { alt: true }))).toBe('AltLeft+KeyR')
+  })
+
+  it('code 无法识别（空串 / Unidentified）时不产生组合，避免录入 garbage', () => {
+    // 部分键盘布局右 Alt 被映射为 AltGr，webview 上报 code=Unidentified
+    expect(comboFromKeyEvent(key('Unidentified', { alt: true }))).toBeNull()
+    expect(comboFromKeyEvent(key('', { alt: true }))).toBeNull()
+    expect(comboFromModifierKeyUp(key('Unidentified'))).toBeNull()
+  })
+
   it('仅按下修饰键不构成组合（等待主键）', () => {
     expect(comboFromKeyEvent(key('ControlLeft', { ctrl: true }))).toBeNull()
     expect(comboFromKeyEvent(key('ShiftLeft', { shift: true }))).toBeNull()

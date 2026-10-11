@@ -31,9 +31,12 @@ export interface KeyEventLike {
  * 把按键事件转为规范组合字符串；仅按下修饰键时返回 null（等待主键）。
  * 注意：修饰键的左右侧不在事件中区分（用 AltLeft 代表按住 Alt），
  * 单独的修饰键热键（如默认录音键 AltRight）由 comboFromModifierKeyUp 捕获。
+ * code 为空 / Unidentified（部分键盘布局右 Alt 被映射为 AltGr 时会出现）
+ * 时不产生组合，避免录入 garbage。
  */
 export function comboFromKeyEvent(e: KeyEventLike): string | null {
   if (isModifierCode(e.code)) return null
+  if (!isKnownKeyCode(e.code)) return null
   const parts: string[] = []
   if (e.ctrlKey) parts.push('ControlLeft')
   if (e.altKey) parts.push('AltLeft')
@@ -45,6 +48,11 @@ export function comboFromKeyEvent(e: KeyEventLike): string | null {
 
 export function isModifierCode(code: string): boolean {
   return (MODIFIER_CODES as readonly string[]).includes(code)
+}
+
+/** code 是否可作为主键录入（排除空串与浏览器无法识别的 Unidentified）。 */
+function isKnownKeyCode(code: string): boolean {
+  return code !== '' && code !== 'Unidentified'
 }
 
 /**

@@ -121,7 +121,7 @@ pub struct GeneralConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HotkeyConfig {
-    /// 录音快捷键键名（默认右 Alt，macOS 右 Option 同为 `AltRight`）。
+    /// 录音快捷键键名（全平台默认 Alt+R，即 `AltLeft+KeyR`；PRD 3.1.1 规则 1）。
     pub trigger: String,
     /// 触发模式：按住说话（默认）/ 切换。
     pub mode: HotkeyMode,
@@ -140,7 +140,11 @@ pub struct HotkeyConfig {
 impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
-            trigger: "AltRight".to_string(),
+            // 默认触发键全平台统一为 Alt+R（左 Alt + R，PRD 3.1.1 规则 1）：
+            // 组合键在三个平台的后端（RegisterHotKey / XGrabKey / NSEvent）均为
+            // 受支持路径，无平台差异；IDE / 浏览器无默认占用；不受右 Alt 被映射为
+            // AltGr 的键盘布局影响。单个修饰键仍可在 Windows 通过低级钩子设置。
+            trigger: "AltLeft+KeyR".to_string(),
             mode: HotkeyMode::default(),
             cancel_trigger: "Escape".to_string(),
             max_recording_minutes: 5,
@@ -594,7 +598,7 @@ mod tests {
     async fn normal_read_write_roundtrip() {
         let dir = TestDir::new("roundtrip");
         let (store, _rx) = test_store(&dir);
-        assert_eq!(store.get().await.hotkey.trigger, "AltRight");
+        assert_eq!(store.get().await.hotkey.trigger, "AltLeft+KeyR");
         assert_eq!(store.get().await.hotkey.max_recording_minutes, 5);
 
         let mut value = section_value(&store, ConfigSection::Hotkey).await;
@@ -704,7 +708,7 @@ mod tests {
             } => {}
             other => panic!("期望 ConfigRecovered(Default)，实际 {other:?}"),
         }
-        assert_eq!(store.get().await.hotkey.trigger, "AltRight");
+        assert_eq!(store.get().await.hotkey.trigger, "AltLeft+KeyR");
     }
 
     #[tokio::test]
@@ -764,7 +768,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), format!("E-CONFIG-{ERR_BAD_VALUE:03}"));
-        assert_eq!(store.get().await.hotkey.trigger, "AltRight");
+        assert_eq!(store.get().await.hotkey.trigger, "AltLeft+KeyR");
 
         // 超出范围的最长录音时长被拒绝（PRD 3.1.1 规则 5：1–10 分钟）。
         let mut value = serde_json::to_value(HotkeyConfig::default()).unwrap();

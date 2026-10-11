@@ -312,8 +312,8 @@ mod tests {
         };
         let err = service.apply_config(&config).await.unwrap_err();
         assert_eq!(err.code(), "E-HOTKEY-001");
-        // 注销后被清空，再回滚重新注册旧键 AltRight。
-        assert_eq!(backend.current().as_deref(), Some("AltRight"));
+        // 注销后被清空，再回滚重新注册旧键（默认 Alt+R）。
+        assert_eq!(backend.current().as_deref(), Some("AltLeft+KeyR"));
     }
 
     #[tokio::test]
