@@ -177,12 +177,24 @@ function updateDictEnabled(enabled) {
       <div class="settings-card">
         <div class="dict-toolbar">
           <span class="dict-counter">{{ counterText }}</span>
-          <InputText
-            v-model="search"
-            class="dict-search"
-            :placeholder="t.dict.replace.searchPlaceholder"
-            :aria-label="t.dict.replace.searchPlaceholder"
-          />
+          <div class="dict-search-wrap">
+            <InputText
+              v-model="search"
+              class="dict-search"
+              :placeholder="t.dict.replace.searchPlaceholder"
+              :aria-label="t.dict.replace.searchPlaceholder"
+            />
+            <button
+              v-if="search"
+              type="button"
+              class="dict-search-clear"
+              :aria-label="t.common.clear"
+              :title="t.common.clear"
+              @click="search = ''"
+            >
+              <i class="pi pi-times" aria-hidden="true" />
+            </button>
+          </div>
           <Button
             type="button"
             icon="pi pi-plus"
@@ -192,7 +204,7 @@ function updateDictEnabled(enabled) {
           />
           <Button
             type="button"
-            icon="pi pi-upload"
+            icon="pi pi-download"
             :label="exporting ? t.dict.replace.exporting : t.dict.replace.export"
             :loading="exporting"
             severity="secondary"
@@ -200,7 +212,7 @@ function updateDictEnabled(enabled) {
           />
           <Button
             type="button"
-            icon="pi pi-download"
+            icon="pi pi-upload"
             :label="importing ? t.dict.replace.importing : t.dict.replace.import"
             :loading="importing"
             severity="secondary"
@@ -337,9 +349,35 @@ function updateDictEnabled(enabled) {
   min-width: 52px;
 }
 
-.dict-search {
+.dict-search-wrap {
+  position: relative;
   flex: 1;
   min-width: 160px;
+}
+
+.dict-search {
+  width: 100%;
+  padding-right: 30px;
+}
+
+/* 清除图标：输入框内部右侧，无文本时不渲染（v-if） */
+.dict-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--vt-color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .dict-master-label {
