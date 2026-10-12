@@ -11,9 +11,10 @@
 | `pnpm quality:gate` | 执行门禁：超限且未登记基线、或基线内增长 → 退出码 1 |
 | `pnpm quality:baseline` | 重建基线：登记超限文件；只允许条目缩小 / 清理，增大需 `--force` 并说明理由 |
 
-直接调用：`node tools/source-quality/cli.mjs <report|check|update-baseline> [--json] [--top=N] [--no-functions] [--force]`
+直接调用：`node tools/source-quality/cli.mjs <report|check|update-baseline> [--json] [--top=N] [--no-functions] [--out[=路径]] [--force]`
 
 - `--json`：机器可读输出（AI 编程代理与脚本优先使用）；若要把 JSON 直接管道给其他程序，请使用 `pnpm --silent quality:stats --json`（或直接 `node tools/source-quality/cli.mjs report --json`），避免 pnpm 任务横幅混入 stdout；
+- `--out[=路径]`：把报告写入文件；省略路径时**默认写入 `tmp/`**（`tmp/quality-<report|check>.json|.txt`，tmp/ 已 gitignore）。报告属于临时产物，**不要提交到仓库**；
 - 退出码：`0` 通过 / `1` 门禁未通过 / `2` 用法或运行错误。
 
 ## 门禁口径
