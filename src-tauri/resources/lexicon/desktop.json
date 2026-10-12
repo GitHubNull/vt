@@ -1,0 +1,26 @@
+{
+  "stack": "desktop",
+  "version": 1,
+  "terms": [
+    { "term": "Electron", "aliases": ["伊莱克创", "依莱克创"] },
+    { "term": "Tauri", "aliases": ["陶瑞", "塔瑞"] },
+    { "term": "Qt", "aliases": ["库特"] },
+    { "term": "WPF", "aliases": ["达不溜批艾福"] },
+    { "term": "WinUI", "aliases": ["win ui", "温UI"] },
+    { "term": "UWP", "aliases": ["优达不溜皮"] },
+    { "term": ".NET", "aliases": ["dotnet", "dot net", "点奈特"] },
+    { "term": "C#", "aliases": ["c sharp", "csharp", "西沙普"] },
+    { "term": "C++", "aliases": ["c plus plus", "cplusplus", "c加加", "西加加"] },
+    { "term": "GTK", "aliases": ["吉提凯"] },
+    { "term": "wxWidgets", "aliases": ["wx widgets"] },
+    { "term": "Blazor", "aliases": ["布拉泽"] },
+    { "term": "MAUI", "aliases": ["毛伊"] },
+    { "term": "Avalonia", "aliases": ["阿瓦罗尼亚"] },
+    { "term": "PyQt", "aliases": ["派Q特"] },
+    { "term": "Wails", "aliases": ["维欧斯"] },
+    { "term": "Delphi", "aliases": ["德尔菲"] },
+    { "term": "Visual Studio", "aliases": ["visualstudio", "维祖尔斯图迪欧"] },
+    { "term": "VS Code", "aliases": ["vscode", "vs code", "维艾斯扣德"] },
+    { "term": "JetBrains", "aliases": ["杰特布莱恩斯"] }
+  ]
+}

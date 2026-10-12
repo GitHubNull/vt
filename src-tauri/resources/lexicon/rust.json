@@ -1,0 +1,25 @@
+{
+  "stack": "rust",
+  "version": 1,
+  "terms": [
+    { "term": "Rust", "aliases": ["拉斯特", "锐斯特"] },
+    { "term": "Cargo", "aliases": ["卡戈", "卡古"] },
+    { "term": "crate", "aliases": ["克瑞特"] },
+    { "term": "rustc", "aliases": ["拉斯特西"] },
+    { "term": "rustup", "aliases": ["拉斯特阿普"] },
+    { "term": "Tokio", "aliases": ["托奇欧", "托基欧"] },
+    { "term": "Actix", "aliases": ["艾克提克斯"] },
+    { "term": "Axum", "aliases": ["艾克萨姆"] },
+    { "term": "Rocket", "aliases": ["若凯特"] },
+    { "term": "Warp", "aliases": ["沃普"] },
+    { "term": "Serde", "aliases": ["塞尔德"] },
+    { "term": "clap", "aliases": ["克拉普"] },
+    { "term": "Rayon", "aliases": ["瑞昂"] },
+    { "term": "Bevy", "aliases": ["贝维"] },
+    { "term": "Polars", "aliases": ["波拉斯"] },
+    { "term": "anyhow", "aliases": ["艾尼霍"] },
+    { "term": "WASM", "aliases": ["wasm", "瓦斯姆"] },
+    { "term": "WebAssembly", "aliases": ["web assembly", "外布阿瑟姆布利"] },
+    { "term": "wasm-pack", "aliases": ["wasmpack", "wasm pack"] }
+  ]
+}

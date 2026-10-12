@@ -1,8 +1,8 @@
 //! 文本输出选项 Stage（F-SET-02、PRD 3.8.3）：过滤语气词 / 智能数字转换 /
-//! 输出繁体中文 / 删除结尾标点。
+//! 输出繁体中文 / 删除结尾标点；校正 Stage（T-521 技术词库 / T-522 专有名词）。
 //!
-//! - 开关绑定 `OutputConfig` 对应字段（产品原则 3：自动改写可关闭），
-//!   缓存快照 + `refresh` 异步刷新 + `config:changed(output)` 事件驱动，
+//! - 开关绑定配置对应字段（产品原则 3：自动改写可关闭），
+//!   缓存快照 + `refresh` 异步刷新 + `config:changed(dict/output)` 事件驱动，
 //!   模式与 `ReplaceStage` 一致（`services/post_process.rs`）；
 //! - 全部实现为纯函数 + Stage 薄封装，纯函数单测逐条覆盖验收用例；
 //! - 保守优先（宁可漏转不可错转）：识别不了的串原样保留，绝不产出空文本。
@@ -14,7 +14,11 @@ use std::sync::Mutex;
 use tracing::info;
 
 use crate::services::config_store::ConfigStore;
-use crate::services::post_process::{PipelineContext, Stage};
+use crate::services::lexicon::TechLexiconService;
+use crate::services::post_process::{
+    apply_alias_corrections, CorrectionEntry, PipelineContext, Stage,
+};
+use crate::services::proper_nouns::ProperNounService;
 
 /// 声明一个输出选项 Stage：结构体 + 构造 / 开关缓存刷新 + Stage 实现。
 /// `$transform` 为纯函数（`&str -> String`），Stage 仅做薄封装与改写日志。
@@ -313,6 +317,132 @@ pub fn remove_trailing_punct(text: &str) -> String {
     text[..end].to_string()
 }
 
+// ---- 专有名词校正（T-522，F-DICT-02、PRD 3.4.2 / 3.1.5 步骤 2） ----
+
+/// 专有名词 Stage 缓存快照（启用开关 + 纠正条目；`refresh` 异步刷新）。
+#[derive(Debug, Clone, Default)]
+struct ProperNounCache {
+    enabled: bool,
+    entries: Vec<CorrectionEntry>,
+}
+
+/// 专有名词校正 Stage：读音别名 → 标准写法（PRD 3.1.5：用户个人设置，
+/// 优先级高于技术词库，管线中先于 `TechLexiconStage` 执行）。
+pub struct ProperNounStage {
+    nouns: ProperNounService,
+    config: ConfigStore,
+    cache: Mutex<ProperNounCache>,
+}
+
+impl ProperNounStage {
+    pub fn new(nouns: ProperNounService, config: ConfigStore) -> Self {
+        Self {
+            nouns,
+            config,
+            cache: Mutex::new(ProperNounCache::default()),
+        }
+    }
+
+    /// 异步刷新开关与纠正条目快照（`dict:changed` / `config:changed(dict)` 时调用）。
+    pub async fn refresh(&self) {
+        let enabled = self.config.get().await.dict.proper_nouns.enabled;
+        let entries = self.nouns.enabled_snapshot().await;
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.enabled = enabled;
+            cache.entries = entries;
+        }
+    }
+}
+
+impl Stage for ProperNounStage {
+    fn name(&self) -> &'static str {
+        "proper_nouns"
+    }
+
+    fn enabled(&self) -> bool {
+        self.cache
+            .lock()
+            .map(|cache| cache.enabled)
+            .unwrap_or(false)
+    }
+
+    fn process(&self, ctx: &mut PipelineContext) {
+        let entries = match self.cache.lock() {
+            Ok(cache) => cache.entries.clone(),
+            Err(_) => return,
+        };
+        let before = ctx.text.clone();
+        ctx.text = apply_alias_corrections(&ctx.text, &entries);
+        if ctx.text != before {
+            info!(stage = %self.name(), "专有名词已校正识别文本");
+        }
+    }
+}
+
+// ---- 技术词库校正（T-521，F-CODE-06、PRD 3.2.6 / 3.1.5 步骤 2） ----
+
+/// 技术词库 Stage 缓存快照（启用栈 + 纠正条目；`refresh` 异步刷新）。
+#[derive(Debug, Clone, Default)]
+struct TechLexiconCache {
+    /// 已启用的技术栈（空 = 全停用，Stage 关闭、原文直出）。
+    enabled_stacks: Vec<String>,
+    entries: Vec<CorrectionEntry>,
+}
+
+/// 技术词库校正 Stage：按技术栈启用的术语包把读音别名 / 常见误识别形
+/// 纠正为标准写法（栈启停绑定配置 `dict.tech_lexicon.enabled_stacks`，
+/// 变更经 `config:changed(dict)` 热更新，下一轮识别即时生效）。
+pub struct TechLexiconStage {
+    lexicon: TechLexiconService,
+    config: ConfigStore,
+    cache: Mutex<TechLexiconCache>,
+}
+
+impl TechLexiconStage {
+    pub fn new(lexicon: TechLexiconService, config: ConfigStore) -> Self {
+        Self {
+            lexicon,
+            config,
+            cache: Mutex::new(TechLexiconCache::default()),
+        }
+    }
+
+    /// 异步刷新启用栈与纠正条目快照（`config:changed(dict)` 时调用）。
+    pub async fn refresh(&self) {
+        let enabled_stacks = self.config.get().await.dict.tech_lexicon.enabled_stacks;
+        let entries = self.lexicon.correction_snapshot(&enabled_stacks).await;
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.enabled_stacks = enabled_stacks;
+            cache.entries = entries;
+        }
+    }
+}
+
+impl Stage for TechLexiconStage {
+    fn name(&self) -> &'static str {
+        "tech_lexicon"
+    }
+
+    fn enabled(&self) -> bool {
+        self.cache
+            .lock()
+            .map(|cache| !cache.enabled_stacks.is_empty())
+            .unwrap_or(false)
+    }
+
+    fn process(&self, ctx: &mut PipelineContext) {
+        let entries = match self.cache.lock() {
+            Ok(cache) => cache.entries.clone(),
+            Err(_) => return,
+        };
+        let before = ctx.text.clone();
+        ctx.text = apply_alias_corrections(&ctx.text, &entries);
+        if ctx.text != before {
+            info!(stage = %self.name(), "技术词库已校正识别文本");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,5 +576,157 @@ mod tests {
     fn trailing_punct_keeps_inner() {
         assert_eq!(remove_trailing_punct("你好，世界。"), "你好，世界");
         assert_eq!(remove_trailing_punct("没有标点"), "没有标点");
+    }
+
+    // ---- 校正 Stage（T-521 / T-522）：快照刷新、启停即时生效、纠正行为 ----
+
+    /// 极简临时目录（进程 + 纳秒唯一，析构清理）。
+    struct StageTestDir(std::path::PathBuf);
+
+    impl StageTestDir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "vt-stages-test-{}-{}-{:?}",
+                name,
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for StageTestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn proper_noun_stage_refresh_and_process() {
+        let dir = StageTestDir::new("pn");
+        let (tx, _rx) = crate::events::channel();
+        let config = ConfigStore::load(&dir.0, tx.clone()).unwrap();
+        let nouns = crate::services::proper_nouns::ProperNounService::load(&dir.0, tx.clone());
+        nouns
+            .add(
+                "PostgreSQL".to_string(),
+                vec!["波斯格雷".to_string()],
+                String::new(),
+                true,
+            )
+            .await
+            .unwrap();
+        let stage = ProperNounStage::new(nouns, config);
+
+        // 初始缓存为空：默认开关开启但未刷新 → enabled=false（保守默认，原文直出）。
+        assert!(!stage.enabled());
+
+        // 刷新后启用并携带条目：纠正生效。
+        stage.refresh().await;
+        assert!(stage.enabled());
+        let mut ctx = PipelineContext::new(1, "迁移到波斯格雷".to_string());
+        stage.process(&mut ctx);
+        assert_eq!(ctx.text, "迁移到PostgreSQL");
+    }
+
+    #[tokio::test]
+    async fn proper_noun_stage_disable_takes_effect_immediately() {
+        // SPEC：启停即时生效——关闭开关 + 刷新后 Stage 跳过（原文直出）。
+        let dir = StageTestDir::new("pn-toggle");
+        let (tx, _rx) = crate::events::channel();
+        let config = ConfigStore::load(&dir.0, tx.clone()).unwrap();
+        let nouns = crate::services::proper_nouns::ProperNounService::load(&dir.0, tx);
+        nouns
+            .add(
+                "Foo".to_string(),
+                vec!["福".to_string()],
+                String::new(),
+                true,
+            )
+            .await
+            .unwrap();
+        let stage = ProperNounStage::new(nouns, config.clone());
+        stage.refresh().await;
+        assert!(stage.enabled());
+
+        // 关闭 dict.proper_nouns.enabled → config:changed → refresh。
+        let mut value = serde_json::to_value(config.get().await.dict).unwrap();
+        value["proper_nouns"]["enabled"] = serde_json::json!(false);
+        config
+            .set_section(crate::services::config_store::ConfigSection::Dict, value)
+            .await
+            .unwrap();
+        stage.refresh().await;
+        assert!(!stage.enabled(), "停用后应立即跳过");
+        // 停用后的"原文直出"由管线循环保证（跳过 enabled()==false 的 Stage），
+        // 全链路验证见 post_process::tests::pipeline_correction_priority_and_disabled_passthrough。
+    }
+
+    #[tokio::test]
+    async fn tech_lexicon_stage_stack_toggle_instant_effect() {
+        // SPEC：各技术栈词库独立启停、即时生效；全停用原文直出。
+        let dir = StageTestDir::new("tl");
+        let (tx, _rx) = crate::events::channel();
+        let config = ConfigStore::load(&dir.0, tx.clone()).unwrap();
+        let lexicon = crate::services::lexicon::TechLexiconService::load(tx.clone());
+        let stage = TechLexiconStage::new(lexicon, config.clone());
+
+        // 默认全停用（空 enabled_stacks）。
+        stage.refresh().await;
+        assert!(!stage.enabled(), "默认全停用");
+        let mut ctx = PipelineContext::new(1, "部署到K8S集群".to_string());
+        stage.process(&mut ctx);
+        assert_eq!(ctx.text, "部署到K8S集群");
+
+        // 启用云原生栈 → K8S 纠正生效。
+        let mut value = serde_json::to_value(config.get().await.dict).unwrap();
+        value["tech_lexicon"]["enabled_stacks"] = serde_json::json!(["cloudnative"]);
+        config
+            .set_section(crate::services::config_store::ConfigSection::Dict, value)
+            .await
+            .unwrap();
+        stage.refresh().await;
+        assert!(stage.enabled());
+        let mut ctx = PipelineContext::new(1, "部署到K8S集群".to_string());
+        stage.process(&mut ctx);
+        assert_eq!(ctx.text, "部署到Kubernetes集群");
+
+        // 再停用 → 即时回到原文直出。
+        let mut value = serde_json::to_value(config.get().await.dict).unwrap();
+        value["tech_lexicon"]["enabled_stacks"] = serde_json::json!([]);
+        config
+            .set_section(crate::services::config_store::ConfigSection::Dict, value)
+            .await
+            .unwrap();
+        stage.refresh().await;
+        assert!(!stage.enabled());
+        let mut ctx = PipelineContext::new(1, "部署到K8S集群".to_string());
+        stage.process(&mut ctx);
+        assert_eq!(ctx.text, "部署到K8S集群");
+    }
+
+    #[tokio::test]
+    async fn tech_lexicon_stage_per_stack_scope() {
+        // 只启用数据库栈：Redis 纠正生效、云原生 K8S 不受影响（栈间隔离）。
+        let dir = StageTestDir::new("tl-scope");
+        let (tx, _rx) = crate::events::channel();
+        let config = ConfigStore::load(&dir.0, tx.clone()).unwrap();
+        let lexicon = crate::services::lexicon::TechLexiconService::load(tx);
+        let stage = TechLexiconStage::new(lexicon, config.clone());
+        let mut value = serde_json::to_value(config.get().await.dict).unwrap();
+        value["tech_lexicon"]["enabled_stacks"] = serde_json::json!(["database"]);
+        config
+            .set_section(crate::services::config_store::ConfigSection::Dict, value)
+            .await
+            .unwrap();
+        stage.refresh().await;
+
+        let mut ctx = PipelineContext::new(1, "用瑞迪斯缓存K8S清单".to_string());
+        stage.process(&mut ctx);
+        assert_eq!(ctx.text, "用Redis缓存K8S清单");
     }
 }

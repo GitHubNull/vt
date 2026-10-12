@@ -1,0 +1,27 @@
+{
+  "stack": "mobile",
+  "version": 1,
+  "terms": [
+    { "term": "Android", "aliases": ["安多伊德"] },
+    { "term": "iOS", "aliases": ["i o s", "爱奥斯"] },
+    { "term": "Swift", "aliases": ["斯维夫特"] },
+    { "term": "SwiftUI", "aliases": ["swift ui", "斯维夫特UI"] },
+    { "term": "Objective-C", "aliases": ["objectivec", "objective c", "奥布杰克蒂夫西"] },
+    { "term": "Xcode", "aliases": ["x code", "艾克斯口德"] },
+    { "term": "Flutter", "aliases": ["弗拉特"] },
+    { "term": "Dart", "aliases": ["达特"] },
+    { "term": "Jetpack Compose", "aliases": ["jetpackcompose", "jetpack compose", "杰特帕克康波斯"] },
+    { "term": "CocoaPods", "aliases": ["cocoa pods", "口口泡兹"] },
+    { "term": "TestFlight", "aliases": ["test flight", "泰斯特福莱特"] },
+    { "term": "Fastlane", "aliases": ["fast lane", "法斯特兰"] },
+    { "term": "App Store", "aliases": ["appstore", "艾普斯朵"] },
+    { "term": "Google Play", "aliases": ["googleplay", "古构普雷"] },
+    { "term": "APK", "aliases": ["诶批凯"] },
+    { "term": "ADB", "aliases": ["诶迪比"] },
+    { "term": "Retrofit", "aliases": ["瑞特罗菲特"] },
+    { "term": "Realm", "aliases": ["瑞尔姆"] },
+    { "term": "Ionic", "aliases": ["爱欧尼克"] },
+    { "term": "Cordova", "aliases": ["口多瓦"] },
+    { "term": "ProGuard", "aliases": ["pro guard", "普罗嘎德"] }
+  ]
+}

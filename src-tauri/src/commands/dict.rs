@@ -1,4 +1,5 @@
-//! 替换词典命令（T-011 契约，F-DICT-01；前端封装 `src/api/dict.ts` 逐字对应）。
+//! 词典命令（T-011 替换词典、T-521 技术词库、T-522 专有名词；前端封装
+//! `src/api/dict.ts` / `src/api/lexicon.ts` / `src/api/properNouns.ts` 逐字对应）。
 //!
 //! 命令名与参数名为前后端契约（tech/03 3.5），修改须同步前端。
 
@@ -6,6 +7,8 @@ use tauri::State;
 
 use crate::error::AppError;
 use crate::services::dict::ReplaceRule;
+use crate::services::lexicon::TechStackLexicon;
+use crate::services::proper_nouns::ProperNoun;
 use crate::state::AppState;
 
 /// 规则清单（管理页数据源）。
@@ -96,6 +99,65 @@ pub async fn dict_import_file(state: State<'_, AppState>, path: String) -> Resul
         .import_rules(&content)
         .await
         .map_err(|err| err.to_string())
+}
+
+// ---- T-521 技术词库（内置术语包，只读；启停经 config dict 节） ----
+
+/// 技术词库全部栈清单（管理页数据源；栈显示名由前端 i18n 映射）。
+#[tauri::command]
+pub async fn tech_lexicon_stacks(
+    state: State<'_, AppState>,
+) -> Result<Vec<TechStackLexicon>, AppError> {
+    Ok(state.dict.tech_lexicon().stacks().await)
+}
+
+// ---- T-522 专有名词（F-DICT-02；持久化 dict/proper-nouns.json） ----
+
+/// 专有名词条目清单（管理页数据源）。
+#[tauri::command]
+pub async fn proper_noun_list(state: State<'_, AppState>) -> Result<Vec<ProperNoun>, AppError> {
+    Ok(state.dict.proper_nouns().list().await)
+}
+
+/// 新增条目；标准写法为空 / 重复 / 超上限返回 E-CONFIG-011/012。
+#[tauri::command]
+pub async fn proper_noun_add(
+    state: State<'_, AppState>,
+    term: String,
+    aliases: Vec<String>,
+    note: String,
+    enabled: bool,
+) -> Result<ProperNoun, AppError> {
+    state
+        .dict
+        .proper_nouns()
+        .add(term, aliases, note, enabled)
+        .await
+}
+
+/// 更新条目（标准写法 / 别名 / 备注 / 启停整体替换）。
+#[tauri::command]
+pub async fn proper_noun_update(
+    state: State<'_, AppState>,
+    noun: ProperNoun,
+) -> Result<(), AppError> {
+    state.dict.proper_nouns().update(noun).await
+}
+
+/// 删除条目。
+#[tauri::command]
+pub async fn proper_noun_delete(state: State<'_, AppState>, id: u64) -> Result<(), AppError> {
+    state.dict.proper_nouns().delete(id).await
+}
+
+/// 启停切换。
+#[tauri::command]
+pub async fn proper_noun_toggle(
+    state: State<'_, AppState>,
+    id: u64,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.dict.proper_nouns().toggle(id, enabled).await
 }
 
 /// 导出 JSON 覆盖写入目标文件，返回写入条数。

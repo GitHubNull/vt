@@ -1,0 +1,29 @@
+{
+  "stack": "database",
+  "version": 1,
+  "terms": [
+    { "term": "MySQL", "aliases": ["my sql", "买SQL", "迈艾斯扣埃尔"] },
+    { "term": "PostgreSQL", "aliases": ["postgres", "postgre", "pg", "波斯特格瑞", "波斯格雷", "波斯特格瑞斯"] },
+    { "term": "SQLite", "aliases": ["sqllite", "s q lite", "艾斯扣莱特", "西扣莱特"] },
+    { "term": "SQLServer", "aliases": ["sql server", "西扣瑟弗"] },
+    { "term": "Oracle", "aliases": ["奥瑞克尔", "欧瑞克"] },
+    { "term": "Redis", "aliases": ["瑞迪斯", "瑞狄斯", "茹迪斯"] },
+    { "term": "MongoDB", "aliases": ["mongo db", "蒙戈DB", "蒙勾DB"] },
+    { "term": "Kafka", "aliases": ["卡夫卡", "卡法卡"] },
+    { "term": "Elasticsearch", "aliases": ["elastic search", "es", "伊拉斯蒂克搜"] },
+    { "term": "RabbitMQ", "aliases": ["rabbit mq", "瑞比特MQ"] },
+    { "term": "RocketMQ", "aliases": ["rocket mq", "若凯特MQ"] },
+    { "term": "ClickHouse", "aliases": ["click house", "克里克豪斯"] },
+    { "term": "Cassandra", "aliases": ["卡桑德拉"] },
+    { "term": "HBase", "aliases": ["h base", "诶曲贝斯"] },
+    { "term": "InfluxDB", "aliases": ["influx db", "因弗克斯DB"] },
+    { "term": "Neo4j", "aliases": ["neo four j", "尼欧佛杰"] },
+    { "term": "MinIO", "aliases": ["min io", "敏爱欧"] },
+    { "term": "Nacos", "aliases": ["纳口斯"] },
+    { "term": "Sentinel", "aliases": ["塞提内尔"] },
+    { "term": "TiDB", "aliases": ["替DB"] },
+    { "term": "OceanBase", "aliases": ["ocean base", "欧申贝斯"] },
+    { "term": "ORM", "aliases": ["欧艾艾姆"] },
+    { "term": "CRUD", "aliases": ["克瑞德"] }
+  ]
+}

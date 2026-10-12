@@ -1,0 +1,22 @@
+{
+  "stack": "go",
+  "version": 1,
+  "terms": [
+    { "term": "Go", "aliases": ["golang", "果兰"] },
+    { "term": "Goroutine", "aliases": ["go routine", "果鲁汀"] },
+    { "term": "gRPC", "aliases": ["grpc", "格瑞批西"] },
+    { "term": "Gin", "aliases": ["金框架", "吉恩"] },
+    { "term": "GORM", "aliases": ["gorm", "高姆"] },
+    { "term": "Beego", "aliases": ["比果"] },
+    { "term": "Echo", "aliases": ["艾口", "埃口"] },
+    { "term": "Fiber", "aliases": ["法伯"] },
+    { "term": "Cobra", "aliases": ["寇布拉"] },
+    { "term": "Viper", "aliases": ["外帕"] },
+    { "term": "Protobuf", "aliases": ["proto buf", "普罗托巴夫"] },
+    { "term": "GoLand", "aliases": ["高兰"] },
+    { "term": "Delve", "aliases": ["德尔弗"] },
+    { "term": "Gopher", "aliases": ["果佛"] },
+    { "term": "Testify", "aliases": ["泰斯提法"] },
+    { "term": "GOMAXPROCS", "aliases": ["果maxprocs"] }
+  ]
+}

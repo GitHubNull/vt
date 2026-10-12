@@ -1,4 +1,6 @@
-//! DictService（T-011，F-DICT-01、PRD 3.4.1）：替换词典规则管理。
+//! DictService（T-011，F-DICT-01、PRD 3.4.1）：替换词典规则管理 + 词典聚合入口
+//! （T-522 专有名词、T-521 技术词库子服务随本服务加载，见 `proper_nouns()` /
+//! `tech_lexicon()`）。
 //!
 //! - 规则持久化：数据目录 `dict/replace.json`（复用 ConfigStore 原子写入工具，
 //!   NFR-R-05：tmp → fsync → rename，任何时刻无半写状态）；
@@ -21,6 +23,8 @@ use tracing::{info, warn};
 use crate::error::AppError;
 use crate::events::AppEvent;
 use crate::services::config_store::write_json_atomic;
+use crate::services::lexicon::TechLexiconService;
+use crate::services::proper_nouns::ProperNounService;
 
 /// 词典文件相对数据目录路径（`dict/replace.json`）。
 pub const DICT_REL_PATH: &str = "dict/replace.json";
@@ -54,7 +58,8 @@ struct ReplaceDictFile {
     rules: Vec<ReplaceRule>,
 }
 
-/// DictService：规则内存镜像 + 原子持久化 + 变更广播。
+/// DictService：词典聚合入口——替换规则内存镜像 + 原子持久化 + 变更广播，
+/// 并持有专有名词（T-522）与技术词库（T-521）子服务句柄。
 #[derive(Clone)]
 pub struct DictService {
     path: Arc<PathBuf>,
@@ -63,6 +68,10 @@ pub struct DictService {
     events: Arc<broadcast::Sender<AppEvent>>,
     /// 词典文件损坏回退标记（加载后由调用方读取并提示）。
     recovered: Arc<RwLock<bool>>,
+    /// 专有名词子服务（T-522，F-DICT-02）：`dict/proper-nouns.json`。
+    proper_nouns: ProperNounService,
+    /// 技术词库子服务（T-521，F-CODE-06）：内置术语包（编译期内嵌）。
+    tech_lexicon: TechLexiconService,
 }
 
 impl DictService {
@@ -91,13 +100,29 @@ impl DictService {
             }
         };
         let next_id = rules.iter().map(|rule| rule.id).max().unwrap_or(0) + 1;
+        // T-522 专有名词（损坏自动回退空词典并广播提示，NFR-S-07）
+        // 与 T-521 技术词库（内置数据，损坏栈跳过并广播提示）随词典聚合加载。
+        let proper_nouns = ProperNounService::load(data_dir, events.clone());
+        let tech_lexicon = TechLexiconService::load(events.clone());
         Ok(Self {
             path: Arc::new(path),
             rules: Arc::new(RwLock::new(rules)),
             next_id: Arc::new(RwLock::new(next_id)),
             events: Arc::new(events),
             recovered: Arc::new(RwLock::new(recovered)),
+            proper_nouns,
+            tech_lexicon,
         })
+    }
+
+    /// 专有名词子服务句柄（T-522；命令层与管线 Stage 共用）。
+    pub fn proper_nouns(&self) -> &ProperNounService {
+        &self.proper_nouns
+    }
+
+    /// 技术词库子服务句柄（T-521；命令层与管线 Stage 共用）。
+    pub fn tech_lexicon(&self) -> &TechLexiconService {
+        &self.tech_lexicon
     }
 
     /// 词典文件是否因损坏回退过空词典（启动加载后检查一次并提示）。
