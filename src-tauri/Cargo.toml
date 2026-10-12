@@ -58,6 +58,15 @@ image = "0.25"
 # 简繁转换（T-011 输出选项：输出繁体中文；zhconv 纯 Rust OpenCC 实现，离线可用）
 zhconv = "0.4"
 zip = "2"
+# 密钥安全存储（tech/02 2.3 候选 crate 确认；T-531 登记：OS 凭据管理器，NFR-S-01；
+# Linux 走 Secret Service（zbus），Windows 走凭据管理器，macOS 走 Keychain）
+keyring = "3"
+# Linux 无 Secret Service 降级加密（tech/08 8.3；T-531 登记：机器绑定对称加密，
+# PBKDF2-HMAC-SHA256 派生密钥 + AES-256-CBC + HMAC-SHA256 完整性校验）
+aes = "0.8"
+cbc = "0.1"
+pbkdf2 = "0.12"
+hmac = "0.12"
 
 # 平台焦点检测（T-007；仅对应平台编译）；Win32_UI_Input_KeyboardAndMouse / Threading /
 # LibraryLoader 为低级键盘钩子后端（WH_KEYBOARD_LL，修饰键单独作触发键）所需；
@@ -75,6 +84,10 @@ windows-sys = { version = "0.59", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 accessibility-sys = "0.1"
 core-foundation = "0.9"
+# 前台应用识别（T-501 登记，tech/09 9.2.3）：NSWorkspace 读前台应用 bundle id /
+# 应用名 / pid；窗口标题走上列 accessibility-sys 辅助功能 API（已登记）
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSRunningApplication", "NSWorkspace"] }
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 x11rb = "0.13"
 
