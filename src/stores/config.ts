@@ -52,15 +52,24 @@ export function defaultConfig(): AppConfig {
       paste_input: true,
       keep_text_in_clipboard: false,
     },
-    dict: { enabled: true },
+    dict: {
+      enabled: true,
+      tech_lexicon: { enabled_stacks: [] },
+      proper_nouns: { enabled: true },
+    },
     asr: {
       current_model_id: null,
       models_dir: null,
       download_proxy: null,
       model_source: 'mirror',
+      punct: { enabled: false },
     },
     about: { auto_check_update: true },
     log: { targets: ['file', 'database'] },
+    scene: { custom_rules: [], override_scene: null },
+    ai: { providers: [] },
+    stats: { anonymous_upload: false },
+    coding: { commands_enabled: true, mixed_text_rules: true, terminal_guard: true },
   }
 }
 

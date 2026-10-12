@@ -77,11 +77,16 @@ export interface OutputConfig {
 }
 
 /** 词典设置（F-DICT-01 总开关）。 */
+/** 替换词典设置（F-DICT-01 总开关 + T-521/T-522 子词典）。 */
 export interface DictConfig {
   enabled: boolean
+  /** 技术词库（T-521）。 */
+  tech_lexicon: TechLexiconConfig
+  /** 专有名词（T-522）。 */
+  proper_nouns: ProperNounsConfig
 }
 
-/** 识别引擎设置（T-006 当前模型；T-017 下载体验）。 */
+/** 识别引擎设置（T-006 当前模型；T-017 下载体验；T-545 标点恢复）。 */
 export interface AsrConfig {
   /** 当前激活模型 ID（null = 自动选择首个可用模型）。 */
   current_model_id: string | null
@@ -91,6 +96,8 @@ export interface AsrConfig {
   download_proxy: string | null
   /** 模型下载源（默认 mirror 镜像源）。 */
   model_source: 'mirror' | 'official'
+  /** 识别标点恢复（T-545）。 */
+  punct: PunctConfig
 }
 
 /** 关于页设置（F-ABOUT-01）。 */
@@ -107,6 +114,72 @@ export interface LogConfig {
   targets: LogTargetOption[]
 }
 
+/** 应用场景（T-501，与 Rust SceneKind 逐字对应）。 */
+export type SceneKind =
+  | 'ide'
+  | 'terminal'
+  | 'ai_chat'
+  | 'browser'
+  | 'docs'
+  | 'other'
+  | 'unknown'
+
+/** 用户自定义场景规则（T-501：应用标识 → 场景）。 */
+export interface SceneRule {
+  app: string
+  scene: SceneKind
+}
+
+/** 场景识别设置（T-501）。 */
+export interface SceneConfig {
+  custom_rules: SceneRule[]
+  override_scene: SceneKind | null
+}
+
+/** AI 供应商条目（T-531；API Key 只存 OS 凭据，api_key_ref 为引用键）。 */
+export interface AiProviderEntry {
+  id: string
+  name: string
+  protocol: string
+  base_url: string
+  enabled: boolean
+  model: string | null
+  api_key_ref: string | null
+  local: boolean
+}
+
+/** AI 设置（T-531）。 */
+export interface AiConfig {
+  providers: AiProviderEntry[]
+}
+
+/** 使用统计设置（T-541；匿名上报 v0.5 仅占位，默认关）。 */
+export interface StatsConfig {
+  anonymous_upload: boolean
+}
+
+/** 编程能力设置（T-511 起；T-517 设置页）。 */
+export interface CodingConfig {
+  commands_enabled: boolean
+  mixed_text_rules: boolean
+  terminal_guard: boolean
+}
+
+/** 技术词库设置（T-521）。 */
+export interface TechLexiconConfig {
+  enabled_stacks: string[]
+}
+
+/** 专有名词设置（T-522）。 */
+export interface ProperNounsConfig {
+  enabled: boolean
+}
+
+/** 识别标点恢复设置（T-545）。 */
+export interface PunctConfig {
+  enabled: boolean
+}
+
 /** 应用配置根（get_config 返回完整镜像）。 */
 export interface AppConfig {
   general: GeneralConfig
@@ -117,9 +190,53 @@ export interface AppConfig {
   asr: AsrConfig
   about: AboutConfig
   log: LogConfig
+  scene: SceneConfig
+  ai: AiConfig
+  stats: StatsConfig
+  coding: CodingConfig
 }
 
 export type ConfigSection = keyof AppConfig
+
+/* ---- 使用统计（T-541 命令契约 stats_summary / stats_clear） ---- */
+
+export type StatsRangeOption = 'today' | 'week' | 'month' | 'all'
+
+/** 命名计数项（场景分布 / 口令 / 模板 / 词典命中）。 */
+export interface NamedCount {
+  name: string
+  count: number
+}
+
+/** 单日趋势点。 */
+export interface StatsDayPoint {
+  date: string
+  chars: number
+  recordings: number
+  recording_ms: number
+}
+
+/** 范围聚合总计。 */
+export interface StatsTotals {
+  recordings: number
+  recording_ms: number
+  chars: number
+  degraded: number
+  failed: number
+  ai_uses: number
+  command_uses: number
+  template_uses: number
+}
+
+/** 统计查询结果（统计页整体数据源）。 */
+export interface StatsSummary {
+  totals: StatsTotals
+  days: StatsDayPoint[]
+  scenes: NamedCount[]
+  commands: NamedCount[]
+  templates: NamedCount[]
+  dict_hits: NamedCount[]
+}
 
 /* ---- 音频设备（T-005 枚举命令 list_audio_devices 的返回元素，手工同步） ---- */
 
@@ -270,6 +387,36 @@ export interface ReplaceRule {
   wrong: string
   /** 正确词；空字符串表示删除该词。 */
   right: string
+  enabled: boolean
+}
+
+/* ---- 技术词库（T-521 命令契约，后端 services/lexicon.rs） ---- */
+
+/** 术语条目：标准写法 + 读音别名 / 常见误识别形。 */
+export interface TechTerm {
+  term: string
+  aliases: string[]
+}
+
+/** tech_lexicon_stacks 返回元素（单个技术栈词库，只读内置数据）。 */
+export interface TechStackLexicon {
+  /** 栈标识（前端经 i18n coding.glossary.stacks.<id> 映射显示名）。 */
+  id: string
+  version: number
+  terms: TechTerm[]
+}
+
+/* ---- 专有名词（T-522 命令契约，后端 services/proper_nouns.rs） ---- */
+
+/** 专有名词条目（后端 ProperNoun 序列化形态）。 */
+export interface ProperNoun {
+  id: number
+  /** 标准写法。 */
+  term: string
+  /** 读音别名（可多个；空数组 = 按标准写法匹配）。 */
+  aliases: string[]
+  /** 备注（可选）。 */
+  note: string
   enabled: boolean
 }
 

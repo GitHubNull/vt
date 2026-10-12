@@ -12,6 +12,7 @@ pub mod dict;
 pub mod hotkey;
 pub mod inject;
 pub mod log;
+pub mod scene;
 pub mod stats;
 pub mod system;
 pub mod window;

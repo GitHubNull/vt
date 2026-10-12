@@ -51,7 +51,14 @@ fn main() {
             let log_store = init_logging(app)?;
             let state =
                 tauri::async_runtime::block_on(init_services(app, process_start, log_store))?;
+            // T-531 AI 供应商状态：凭据存储（macOS Keychain / Windows 凭据管理器 /
+            // Linux Secret Service，无则降级加密文件，NFR-S-01）独立管理。
+            let ai_state = services::ai::service::AiState::new(
+                state.config.clone(),
+                platform::credentials::default_credential_store(&app.path().app_data_dir()?),
+            );
             app.manage(state);
+            app.manage(ai_state);
             // 窗口必须在 manage(state) 之后创建：tauri.conf.json 声明的窗口在
             // setup 完成前就会加载前端并 invoke 命令，先于 manage 触发 get_config
             // 会报 "state not managed"（Windows WebView2 资源缓存后页载极快，必现）。
@@ -85,6 +92,11 @@ fn main() {
             commands::asr::delete_model,
             commands::asr::set_active_model,
             commands::asr::asr_recognize_wav,
+            // T-545 标点恢复模型管理。
+            commands::asr::punct_model_status,
+            commands::asr::download_punct_model,
+            commands::asr::cancel_punct_model,
+            commands::asr::delete_punct_model,
             // T-011 替换词典。
             commands::dict::dict_list_rules,
             commands::dict::dict_add_rule,
@@ -97,9 +109,41 @@ fn main() {
             // 词典文件导入 / 导出（前端文件对话框对接）。
             commands::dict::dict_export_file,
             commands::dict::dict_import_file,
+            // T-521 技术词库（内置术语包清单，只读）。
+            commands::dict::tech_lexicon_stacks,
+            // T-522 专有名词。
+            commands::dict::proper_noun_list,
+            commands::dict::proper_noun_add,
+            commands::dict::proper_noun_update,
+            commands::dict::proper_noun_delete,
+            commands::dict::proper_noun_toggle,
             // T-018 日志中心。
             commands::log::log_query,
             commands::log::log_export,
+            // T-541 使用统计。
+            commands::stats::stats_summary,
+            commands::stats::stats_clear,
+            // T-501 场景识别。
+            commands::scene::scene_get_current,
+            commands::scene::scene_set_override,
+            commands::scene::scene_clear_override,
+            commands::scene::scene_list_custom_rules,
+            commands::scene::scene_add_custom_rule,
+            commands::scene::scene_update_custom_rule,
+            commands::scene::scene_delete_custom_rule,
+            // T-531 AI 供应商（密钥只进 OS 凭据存储，永不回传明文）。
+            commands::ai::ai_list_presets,
+            commands::ai::ai_list_providers,
+            commands::ai::ai_restore_presets,
+            commands::ai::ai_upsert_provider,
+            commands::ai::ai_delete_provider,
+            commands::ai::ai_set_api_key,
+            commands::ai::ai_clear_api_key,
+            commands::ai::ai_key_status,
+            commands::ai::ai_test_connection,
+            commands::ai::ai_fetch_models,
+            commands::ai::ai_complete,
+            commands::ai::ai_credential_backend,
         ])
         .run(tauri::generate_context!())
         .expect("error while running vibetype application");
@@ -312,6 +356,20 @@ async fn init_services(
         event_tx.subscribe(),
     );
 
+    // T-541 使用统计：订阅链路事件按天聚合（本地、默认零收集，NFR-PR-04）。
+    let stats = std::sync::Arc::new(services::usage_stats::StatsService::load(&data_dir));
+    stats.start(event_tx.subscribe());
+
+    // T-501 场景识别：前台窗口 → 场景分类（内置规则库 + 自定义规则 + override），
+    // 短缓存 + 轮询广播 scene:changed（Wayland 等识别受限时降级 Unknown，
+    // 由 scene_set_override 手动兜底）。
+    let scene = std::sync::Arc::new(services::scene::SceneService::new(
+        config.clone(),
+        platform::window_info::default_provider(),
+        event_tx.clone(),
+    ));
+    scene.start();
+
     Ok(AppState::new(
         config,
         record_tx,
@@ -322,6 +380,8 @@ async fn init_services(
         post_process,
         pipeline,
         log_store,
+        stats,
+        scene,
     ))
 }
 

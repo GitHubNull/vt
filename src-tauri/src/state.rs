@@ -13,6 +13,8 @@ use crate::services::inject::InjectService;
 use crate::services::log::LogStore;
 use crate::services::pipeline::PipelineService;
 use crate::services::post_process::PostProcess;
+use crate::services::scene::SceneService;
+use crate::services::usage_stats::StatsService;
 
 /// 应用全局状态（各服务句柄聚合）。
 ///
@@ -36,6 +38,10 @@ pub struct AppState {
     pub pipeline: Arc<PipelineService>,
     /// 日志服务句柄（T-018）：查询 / 搜索导出 / 记录目标热更新。
     pub log: LogStore,
+    /// 使用统计服务（T-541）：本地按天聚合，默认零收集（NFR-PR-04）。
+    pub stats: std::sync::Arc<StatsService>,
+    /// 场景识别服务（T-501）：当前场景查询 / 手动 override / 自定义规则。
+    pub scene: Arc<SceneService>,
 }
 
 impl AppState {
@@ -51,6 +57,8 @@ impl AppState {
         post_process: Arc<PostProcess>,
         pipeline: Arc<PipelineService>,
         log: LogStore,
+        stats: std::sync::Arc<StatsService>,
+        scene: Arc<SceneService>,
     ) -> Self {
         Self {
             config,
@@ -62,6 +70,8 @@ impl AppState {
             post_process,
             pipeline,
             log,
+            stats,
+            scene,
         }
     }
 }

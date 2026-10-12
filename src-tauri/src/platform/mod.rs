@@ -6,6 +6,7 @@
 //! 调用 OS API 的位置必须附最小权限注释（AGENTS.md 3.5）。
 
 pub mod audio;
+pub mod credentials;
 pub mod hotkey;
 pub mod inject;
 pub mod notify;

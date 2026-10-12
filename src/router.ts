@@ -56,7 +56,7 @@ export const routes: RouteRecordRaw[] = [
       {
         path: 'glossary',
         name: 'coding-glossary',
-        component: comingSoon,
+        component: () => import('./views/coding/GlossaryView.vue'),
         meta: { navChild: { titleKey: 'navChildren.coding.glossary' } },
       },
     ],
@@ -75,7 +75,7 @@ export const routes: RouteRecordRaw[] = [
       {
         path: 'proper-nouns',
         name: 'dict-proper-nouns',
-        component: comingSoon,
+        component: () => import('./views/dict/ProperNounsView.vue'),
         meta: { navChild: { titleKey: 'navChildren.dict.properNouns' } },
       },
     ],
@@ -170,7 +170,7 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/stats',
     name: 'stats',
-    component: comingSoon,
+    component: () => import('./views/stats/StatsView.vue'),
     meta: { navModule: { key: 'stats', icon: 'pi pi-chart-bar', order: 6 } },
   },
   {
