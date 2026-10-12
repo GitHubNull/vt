@@ -184,6 +184,7 @@ impl PresetProvider {
             base_url: self.base_url.to_string(),
             enabled: false,
             model: None,
+            available_models: Vec::new(),
             api_key_ref: None,
             local: self.local,
         }

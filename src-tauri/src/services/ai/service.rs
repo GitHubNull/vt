@@ -578,6 +578,7 @@ mod tests {
                 base_url: "https://api.example.com/v1".to_string(),
                 enabled: false,
                 model: None,
+                available_models: Vec::new(),
                 api_key_ref: None,
                 local: false,
             })
