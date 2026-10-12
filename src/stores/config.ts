@@ -66,7 +66,7 @@ export function defaultConfig(): AppConfig {
     },
     about: { auto_check_update: true },
     log: { targets: ['file', 'database'] },
-    scene: { custom_rules: [], override_scene: null },
+    scene: { custom_rules: [], override_scene: null, entries: [] },
     ai: { providers: [] },
     stats: { anonymous_upload: false },
     coding: { commands_enabled: true, mixed_text_rules: true, terminal_guard: true },

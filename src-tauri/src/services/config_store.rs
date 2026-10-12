@@ -369,6 +369,8 @@ pub struct AiProviderEntry {
     pub enabled: bool,
     /// 当前选用模型（None = 未选择）。
     pub model: Option<String>,
+    /// 已拉取 / 手动维护的可用模型清单（T-532：`list_models` 合并结果，去重保序）。
+    pub available_models: Vec<String>,
     /// OS 凭据存储引用键（None = 未配置 Key；本地供应商不需要）。
     pub api_key_ref: Option<String>,
     /// 本地供应商（Ollama / LM Studio，无外发）。
@@ -384,6 +386,7 @@ impl Default for AiProviderEntry {
             base_url: String::new(),
             enabled: false,
             model: None,
+            available_models: Vec::new(),
             api_key_ref: None,
             local: false,
         }
@@ -405,14 +408,107 @@ pub struct StatsConfig {
     pub anonymous_upload: bool,
 }
 
-/// 场景识别设置（T-501；自定义规则与手动 override，规则引擎设置在 T-502 扩展）。
+/// 场景识别设置（T-501 自定义规则与手动 override；T-502 扩展场景规则模型）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SceneConfig {
-    /// 用户自定义规则（应用标识 → 场景），优先于内置规则库。
+    /// 用户自定义规则（应用标识 → 场景），优先于内置规则库（T-501）。
     pub custom_rules: Vec<SceneRule>,
-    /// 手动场景指定（识别受限环境兜底）；None = 自动识别。
+    /// 手动场景指定 / 临时锁定（PRD 3.2.1 业务规则 3）；None = 自动识别。
     pub override_scene: Option<SceneKind>,
+    /// 场景规则条目（T-502：内置五场景 + 自定义场景；空 = 使用内置默认）。
+    pub entries: Vec<SceneEntry>,
+}
+
+/// 标点风格（T-502，PRD 3.2.1）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PunctStyle {
+    /// 跟随识别结果（保留中文标点）。
+    #[default]
+    Follow,
+    /// 半角标点。
+    HalfWidth,
+    /// 全角标点。
+    FullWidth,
+}
+
+/// 结尾标点策略（T-502）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrailingPunct {
+    /// 跟随通用"删除结尾标点"设置。
+    #[default]
+    Follow,
+    /// 保留结尾标点。
+    Keep,
+    /// 删除结尾标点。
+    Remove,
+}
+
+/// 中英文间空格策略（T-502）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CjkSpace {
+    /// 跟随通用设置。
+    #[default]
+    Follow,
+    /// 自动添加空格。
+    Auto,
+    /// 不处理。
+    None,
+}
+
+/// 场景规则条目（T-502，PRD 3.2.1：内置五场景 + 用户自定义场景）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SceneEntry {
+    /// 稳定 ID（内置：`ide` / `terminal` / `ai_chat` / `docs` / `default`；自定义为生成 ID）。
+    pub id: String,
+    /// 场景名称（可编辑）。
+    pub name: String,
+    /// 图标颜色（前端展示用，`#RRGGBB`）。
+    pub icon_color: String,
+    /// 归属场景（与场景识别结果对应的 SceneKind）。
+    pub scene: SceneKind,
+    /// 匹配应用列表（进程名 / 应用名，大小写不敏感等值匹配）。
+    pub apps: Vec<String>,
+    /// 窗口标题包含关键字（可空；带关键字的规则优先于仅按应用匹配，PRD 3.2.1 规则 1）。
+    pub title_keyword: String,
+    /// 标点风格。
+    pub punct_style: PunctStyle,
+    /// 结尾标点策略。
+    pub trailing_punct: TrailingPunct,
+    /// 中英文间空格策略。
+    pub cjk_space: CjkSpace,
+    /// 编程口令开关。
+    pub commands: bool,
+    /// 自动回车（终端安全：终端场景默认禁止，PRD 3.2.1 / NFR-S-05）。
+    pub auto_enter: bool,
+    /// 默认 AI 模板（None = 不指定；T-533 模板的稳定 ID）。
+    pub ai_template: Option<String>,
+    /// 内置场景标记（内置可编辑、不可删除，可恢复默认；PRD 3.2.1 页面设计）。
+    pub builtin: bool,
+}
+
+impl Default for SceneEntry {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            icon_color: String::new(),
+            scene: SceneKind::default(),
+            apps: Vec::new(),
+            title_keyword: String::new(),
+            punct_style: PunctStyle::default(),
+            trailing_punct: TrailingPunct::default(),
+            cjk_space: CjkSpace::default(),
+            commands: true,
+            auto_enter: true,
+            ai_template: None,
+            builtin: false,
+        }
+    }
 }
 
 /// 用户自定义场景规则（T-501）。

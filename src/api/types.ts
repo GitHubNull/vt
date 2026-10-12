@@ -130,10 +130,38 @@ export interface SceneRule {
   scene: SceneKind
 }
 
-/** 场景识别设置（T-501）。 */
+/** 标点风格（T-502，与 Rust PunctStyle 逐字对应）。 */
+export type PunctStyleOption = 'follow' | 'half_width' | 'full_width'
+
+/** 结尾标点策略（T-502）。 */
+export type TrailingPunctOption = 'follow' | 'keep' | 'remove'
+
+/** 中英文间空格策略（T-502）。 */
+export type CjkSpaceOption = 'follow' | 'auto' | 'none'
+
+/** 场景规则条目（T-502，PRD 3.2.1）。 */
+export interface SceneEntry {
+  id: string
+  name: string
+  icon_color: string
+  scene: SceneKind
+  apps: string[]
+  title_keyword: string
+  punct_style: PunctStyleOption
+  trailing_punct: TrailingPunctOption
+  cjk_space: CjkSpaceOption
+  commands: boolean
+  auto_enter: boolean
+  ai_template: string | null
+  builtin: boolean
+}
+
+/** 场景识别设置（T-501 自定义规则与 override；T-502 扩展场景规则条目）。 */
 export interface SceneConfig {
   custom_rules: SceneRule[]
   override_scene: SceneKind | null
+  /** 场景规则条目（空 = 使用内置默认）。 */
+  entries: SceneEntry[]
 }
 
 /** AI 供应商条目（T-531；API Key 只存 OS 凭据，api_key_ref 为引用键）。 */
@@ -144,6 +172,8 @@ export interface AiProviderEntry {
   base_url: string
   enabled: boolean
   model: string | null
+  /** 已拉取 / 手动维护的可用模型清单（T-532）。 */
+  available_models: string[]
   api_key_ref: string | null
   local: boolean
 }
