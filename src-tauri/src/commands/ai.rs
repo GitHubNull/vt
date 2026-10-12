@@ -1,4 +1,4 @@
-//! AI 供应商命令层（T-531，F-AI-06/07/08；前端封装 `src/api/ai.ts` 随 T-536 对接）。
+//! AI 供应商与模板命令层（T-531 / T-532 / T-533；前端封装 `src/api/ai.ts`）。
 //!
 //! 命令名与参数名为前后端契约（tech/03 3.5），修改须同步前端。
 //! 返回统一 `Result<T, AppError>`（前端拿到 `{ code, message }` 稳定错误编号）。
@@ -7,14 +7,15 @@
 //! - API Key 只能**写入**（`ai_set_api_key`）与**清除**（`ai_clear_api_key`），
 //!   任何命令都不回传 Key 明文；`ai_list_providers` / `ai_key_status` 只回
 //!   "已设置"布尔状态；
-//! - 本模块无任何日志语句携带 Key 或用户文本内容。
+//! - 模板正文属于用户内容（NFR-S-02），命令层不透传日志、不写日志。
 
 use tauri::State;
 
 use crate::error::AppError;
 use crate::platform::credentials::CredentialBackendInfo;
 use crate::services::ai::presets::PresetProvider;
-use crate::services::ai::service::{AiState, ProviderView, RestoreReport};
+use crate::services::ai::service::{AiState, ModelMergeReport, ProviderView, RestoreReport};
+use crate::services::ai::templates::AiTemplate;
 use crate::services::ai::{CompletionRequest, CompletionResponse, ConnectionTest, ModelInfo};
 use crate::services::config_store::AiProviderEntry;
 
@@ -116,4 +117,85 @@ pub async fn ai_credential_backend(
     state: State<'_, AiState>,
 ) -> Result<CredentialBackendInfo, AppError> {
     Ok(state.credential_backend())
+}
+
+/// 拉取供应商模型清单并合并持久化（T-532，F-AI-08；SPEC 的 list_models）：
+/// 支持列表 API 的供应商（OpenAI 兼容 /models、Ollama /api/tags）一键拉取；
+/// 结果规范化后与已存清单合并（去重保序）并原子落盘。
+#[tauri::command]
+pub async fn ai_fetch_and_merge_models(
+    state: State<'_, AiState>,
+    id: String,
+) -> Result<ModelMergeReport, AppError> {
+    state.fetch_and_merge_models(&id).await
+}
+
+/// 手动添加模型条目（T-532；供应商不支持列表 API 时的兜底；同供应商下标识唯一）。
+#[tauri::command]
+pub async fn ai_add_provider_model(
+    state: State<'_, AiState>,
+    id: String,
+    model: String,
+) -> Result<(), AppError> {
+    state.add_provider_model(&id, &model).await
+}
+
+/// 删除模型条目（T-532；删除当前默认模型时默认选择一并清空）。
+#[tauri::command]
+pub async fn ai_remove_provider_model(
+    state: State<'_, AiState>,
+    id: String,
+    model: String,
+) -> Result<(), AppError> {
+    state.remove_provider_model(&id, &model).await
+}
+
+/// 设置 / 清除供应商默认模型（T-532；`model=null` 清除；
+/// 持久化后供未显式指定模型的后续调用使用）。
+#[tauri::command]
+pub async fn ai_set_provider_model(
+    state: State<'_, AiState>,
+    id: String,
+    model: Option<String>,
+) -> Result<(), AppError> {
+    state.set_default_model(&id, model.as_deref()).await
+}
+
+/// 模板清单（T-533，F-AI-01；首次调用自动初始化内置模板，内置在前）。
+#[tauri::command]
+pub async fn ai_list_templates(state: State<'_, AiState>) -> Result<Vec<AiTemplate>, AppError> {
+    state.list_templates().await
+}
+
+/// 新建模板（T-533；名称唯一、供应商与模型绑定校验；内置标记由服务端固定为 false）。
+#[tauri::command]
+pub async fn ai_create_template(
+    state: State<'_, AiState>,
+    template: AiTemplate,
+) -> Result<AiTemplate, AppError> {
+    state.create_template(template).await
+}
+
+/// 更新模板（T-533；内置模板只读 → E-CONFIG-004）。
+#[tauri::command]
+pub async fn ai_update_template(
+    state: State<'_, AiState>,
+    template: AiTemplate,
+) -> Result<AiTemplate, AppError> {
+    state.update_template(template).await
+}
+
+/// 删除模板（T-533；内置模板不可删除）。
+#[tauri::command]
+pub async fn ai_delete_template(state: State<'_, AiState>, id: String) -> Result<(), AppError> {
+    state.delete_template(&id).await
+}
+
+/// 复制模板为自定义（T-533；内置模板的唯一定制路径，名称自动唯一化）。
+#[tauri::command]
+pub async fn ai_copy_template(
+    state: State<'_, AiState>,
+    id: String,
+) -> Result<AiTemplate, AppError> {
+    state.copy_template(&id).await
 }
