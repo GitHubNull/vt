@@ -42,6 +42,8 @@ vt/
 │       ├── v0.5/                #   v0.5 阶段任务 SPEC（T-501 ~ T-543）
 │       ├── v1.0/                #   v1.0 阶段任务 SPEC（T-1001 ~ T-1038）
 │       └── v1.x/                #   v1.x 方向性 SPEC（T-2001 ~ T-2007，立项细化 PRD 后修订）
+├── tools/                       # 工程工具脚本（非产品代码）
+│   └── source-quality/          #   源码质量分析：行数 / 函数统计与单文件行数门禁（pnpm quality:*）
 ├── src/                         # 前端源码（Vue 3，实现阶段填充）
 ├── src-tauri/                   # Rust 后端（Tauri 2，实现阶段创建）
 └── tmp/                         # 临时文件目录（已加入 .gitignore，不提交）
@@ -81,7 +83,8 @@ vt/
   - 不在代码与日志中写入任何密钥、令牌、用户文本内容；
   - 用户可见文案集中在文案 / 国际化资源中，不散落在逻辑里；
   - 涉及键盘钩子、剪贴板、麦克风等系统能力的代码必须附最小权限说明；
-  - 提交前运行格式化与静态检查：`pnpm lint && pnpm typecheck && cargo clippy -- -D warnings && cargo fmt --check`。
+  - 源码文件行数门禁：单文件**有效行**（非空行）上限 500，Rust 文件不计 `#[cfg(test)]` 测试模块，Vue SFC / CSS 放宽至 600（定义见 [tools/source-quality/config.json](./tools/source-quality/config.json)）；超限文件**先拆分再加代码**，历史遗留超限文件登记于基线（允许保持、不得增长）；测量与拆分方法见 [doc/quality/源码文件行数门禁与拆分指南](./doc/quality/源码文件行数门禁与拆分指南.md)；
+  - 提交前运行格式化与静态检查：`pnpm lint && pnpm typecheck && pnpm quality:gate && cargo clippy -- -D warnings && cargo fmt --check`（`pnpm quality:gate` 为源码行数门禁，必须通过）。
 
 ### 3.6 Git 协作约定
 
@@ -94,6 +97,7 @@ vt/
 
 - 本仓库大量文档为中文，回复用户使用**中文**。
 - 修改功能行为前，先引用 PRD 中的功能编号与验收标准，确认改动范围。
+- 新建源码文件或向既有文件添加代码前，先阅读 [源码文件行数门禁与拆分指南](./doc/quality/源码文件行数门禁与拆分指南.md)：先测量（`pnpm quality:stats`）、必要时先拆分、后编码；不要通过放宽上限或更新基线绕过门禁。
 - 不要“为了跑通”而绕过第 3.2 节的产品原则（例如为了方便测试而默认开启自动回车、把密钥写进日志）。
 - 生成示例代码 / 示例文本时，使用 `example.com`、`dev@example.com` 等占位，不使用真实域名、真实密钥格式。
 - 界面相关的改动须对照 `doc/img/语音输入法界面原型截图参考/` 与 PRD 第 4 章的视觉规范，并注意其中列出的“原型问题修正清单”（如侧边栏重复渲染、供应商列表去重）。

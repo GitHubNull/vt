@@ -1,0 +1,54 @@
+{
+  "note": "历史遗留超限文件基线（引入门禁时登记）：基线内文件行数不得再增长；文件拆分到位后运行 pnpm quality:baseline 清理条目。条目只允许缩小，增大需 --force 并在提交信息中说明理由。",
+  "generatedAt": "2026-10-12",
+  "entries": {
+    "src-tauri/src/platform/hotkey/linux_listener.rs": {
+      "lines": 864
+    },
+    "src-tauri/src/services/ai/service.rs": {
+      "lines": 647
+    },
+    "src-tauri/src/services/asr.rs": {
+      "lines": 1020
+    },
+    "src-tauri/src/services/audio.rs": {
+      "lines": 799
+    },
+    "src-tauri/src/services/command_engine.rs": {
+      "lines": 906
+    },
+    "src-tauri/src/services/config_store.rs": {
+      "lines": 749
+    },
+    "src-tauri/src/services/dict.rs": {
+      "lines": 962
+    },
+    "src-tauri/src/services/log.rs": {
+      "lines": 819
+    },
+    "src-tauri/src/services/model_download.rs": {
+      "lines": 515
+    },
+    "src-tauri/src/services/proper_nouns.rs": {
+      "lines": 627
+    },
+    "src-tauri/src/services/punct.rs": {
+      "lines": 513
+    },
+    "src-tauri/src/services/scene.rs": {
+      "lines": 1196
+    },
+    "src-tauri/src/services/usage_stats.rs": {
+      "lines": 529
+    },
+    "src/i18n/en-US.ts": {
+      "lines": 653
+    },
+    "src/i18n/zh-CN.ts": {
+      "lines": 644
+    },
+    "src/views/coding/ScenesView.vue": {
+      "lines": 875
+    }
+  }
+}

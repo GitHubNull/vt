@@ -11,6 +11,9 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
+    "quality:stats": "node tools/source-quality/cli.mjs report",
+    "quality:gate": "node tools/source-quality/cli.mjs check",
+    "quality:baseline": "node tools/source-quality/cli.mjs update-baseline",
     "tauri": "tauri"
   },
   "dependencies": {

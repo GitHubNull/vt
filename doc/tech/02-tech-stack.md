@@ -151,6 +151,8 @@ pnpm typecheck          # vue-tsc 类型检查
 pnpm lint               # ESLint 静态检查
 pnpm format             # Prettier 格式化
 pnpm test               # Vitest 前端单元测试
+pnpm quality:stats      # 源码质量统计报告（单文件行数 / 函数行数 / 长函数预警，工具见 tools/source-quality）
+pnpm quality:gate       # 源码文件行数门禁（提交前必须通过，口径与拆分方法见 doc/quality）
 ```
 
 ### Rust 后端

@@ -1,0 +1,29 @@
+{
+  "roots": ["src", "src-tauri", "tools"],
+  "excludeDirs": ["node_modules", "target", "gen", "dist", "tmp"],
+  "languages": {
+    "rust": { "ext": [".rs"], "limit": 500, "excludeTestModules": true },
+    "typescript": { "ext": [".ts", ".tsx"], "limit": 500 },
+    "javascript": { "ext": [".js", ".mjs", ".cjs"], "limit": 500 },
+    "vue": { "ext": [".vue"], "limit": 600 },
+    "css": { "ext": [".css"], "limit": 600 }
+  },
+  "defaultFunctionWarnLines": 80,
+  "testModuleWarnLines": 400,
+  "ignoreExt": [
+    ".json",
+    ".md",
+    ".toml",
+    ".lock",
+    ".txt",
+    ".svg",
+    ".png",
+    ".ico",
+    ".icns",
+    ".yml",
+    ".yaml",
+    ".html",
+    ".snap",
+    ".map"
+  ]
+}
