@@ -89,8 +89,8 @@
 | 全局快捷键 | Tauri 内置 `global-shortcut` | 按住 / 切换双模式在其事件上实现 |
 | 音频采集 | `cpal` | 三平台麦克风采集，常驻预热 |
 | 文本注入 | `enigo` + 平台 API | 模拟键入；剪贴板用 Tauri 内置 clipboard |
-| 窗口焦点 / 场景识别 | 平台 API（`windows-sys` / Cocoa / X11） | F-CODE-01 场景规则依赖 |
-| 密钥安全存储 | `keyring` | OS 凭据管理器（NFR-S-01） |
+| 窗口焦点 / 场景识别 | `windows-sys` / `accessibility-sys` + `core-foundation` + `objc2` + `objc2-app-kit` / `x11rb` | F-CODE-01 场景规则依赖；T-501 登记：Windows / Linux（X11）为原生 API，macOS 走 NSWorkspace + 辅助功能 API 读窗口标题；Wayland 降级手动切换（tech/09 9.2.3） |
+| 密钥安全存储 | `keyring`（+ `aes`/`cbc`/`pbkdf2`/`hmac` 降级加密） | OS 凭据管理器（NFR-S-01）；T-531 登记：Linux 无 Secret Service 时机器绑定对称加密文件（AES-256-CBC + HMAC-SHA256，tech/08 8.3） |
 | HTTP 客户端 | `reqwest`（rustls） | AI 供应商调用、更新检查 |
 
 > 上表"候选 crate"在对应任务 SPEC 中最终确认；引入新依赖须先在本章登记。
