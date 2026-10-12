@@ -31,6 +31,7 @@ use crate::platform::audio::{AudioBackend, AudioChunk, AudioError, InputStream};
 use crate::platform::volume::{system_volume_control, VolumeControl};
 use crate::services::config_store::{ConfigSection, ConfigStore};
 use crate::services::hotkey::RecordCommand;
+use crate::services::scene::SceneService;
 use crate::services::session::SessionTracker;
 
 /// 错误编号：打开输入设备 / 流失败（NFR-R-03 明确提示）。
@@ -255,6 +256,9 @@ pub struct AudioService {
     tracker: Arc<SessionTracker>,
     /// 系统输出音量控制（PRD 3.8.4 录音时静音扬声器；测试可注入 mock）。
     volume: Arc<dyn VolumeControl>,
+    /// 场景服务句柄（T-502）：录音开始时快照当前场景与规则；
+    /// `None` = 未接入（构造与场景服务初始化顺序无关，经 `attach_scene` 注入）。
+    scene: std::sync::Mutex<Option<SceneService>>,
 }
 
 impl AudioService {
@@ -282,7 +286,22 @@ impl AudioService {
             stats: Arc::new(AudioStats::default()),
             tracker,
             volume,
+            scene: std::sync::Mutex::new(None),
         }
+    }
+
+    /// 注入场景服务句柄（T-502）：每次录音开始时快照当前场景与生效规则条目
+    /// （开录后改配置不影响进行中的会话）。主程序在场景服务构造后调用；
+    /// 重复调用以最后一次为准，未注入时录音链路行为与 T-501 前一致。
+    pub fn attach_scene(&self, scene: SceneService) {
+        if let Ok(mut slot) = self.scene.lock() {
+            *slot = Some(scene);
+        }
+    }
+
+    /// 取场景服务句柄副本（`SceneService` 内部 Arc 共享，克隆开销可忽略）。
+    fn scene_handle(&self) -> Option<SceneService> {
+        self.scene.lock().ok().and_then(|slot| slot.clone())
     }
 
     /// 采集统计句柄（测试断言 NFR-PR-07 丢弃路径）。
@@ -403,6 +422,12 @@ impl AudioService {
                             ));
                             // T-010：会话代次前进（在途的旧会话结果随之过期）。
                             self.tracker.begin(next_session_id);
+                            // T-502：录音开始时快照当前场景与生效规则条目进
+                            // PipelineContext（开录后改配置 / 切窗口不影响本次会话；
+                            // 后处理管线经 SceneService::session_snapshot 读取）。
+                            if let Some(scene) = self.scene_handle() {
+                                let _ = scene.snapshot_for_recording(next_session_id).await;
+                            }
                             next_session_id += 1;
                             start_instant = Some(Instant::now());
                             state = RecordingState::Recording;

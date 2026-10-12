@@ -1,13 +1,21 @@
-//! 场景识别命令（T-501 契约，F-CODE-01；前端封装随 T-502 设置页补充，命令名与
-//! 参数名为前后端契约 tech/03 3.5，修改须同步前端）。
+//! 场景识别与规则命令（T-501 契约 + T-502 扩展，F-CODE-01；前端封装见
+//! src/api/scene.ts，命令名与参数名为前后端契约 tech/03 3.5，修改须同步前端）。
 //!
-//! 手动场景指定（`scene_set_override` / `scene_clear_override`）是 Wayland 等
-//! 识别受限环境的兜底入口（SPEC T-501 步骤 4）；托盘菜单项接入时复用同一命令。
+//! 手动场景指定（`scene_set_override` / `scene_clear_override`）即 PRD 3.2.1
+//! 业务规则 3 的"临时锁定场景"：锁定期间自动识别结果不生效，直到解除；
+//! 托盘菜单与设置页"场景规则"共用同一组命令。
+//!
+//! T-502 新增场景规则条目命令（CRUD / 恢复默认 / 拖动排序持久化）：
+//! - `scene_list_entries`：生效条目清单（配置为空 = 内置五场景默认）；
+//! - `scene_add_entry` / `scene_update_entry` / `scene_delete_entry`：条目 CRUD
+//!   （内置可编辑不可删除，ID 与内置标记由后端裁决）；
+//! - `scene_restore_entry_default`：内置条目恢复 PRD 默认规则（保持列表位置）；
+//! - `scene_reorder_entries`：持久化拖动排序（清单须为全部条目 ID 的排列）。
 
 use tauri::State;
 
 use crate::error::AppError;
-use crate::services::config_store::SceneRule;
+use crate::services::config_store::{SceneEntry, SceneRule};
 use crate::services::scene::{SceneKind, SceneService, SceneStatus};
 use crate::state::AppState;
 
@@ -74,4 +82,60 @@ pub async fn scene_delete_custom_rule(
     app: String,
 ) -> Result<(), AppError> {
     scene_service(&state).delete_custom_rule(&app).await
+}
+
+/// 场景规则条目清单（T-502）：生效值——配置为空 = 内置五场景默认；
+/// 内置条目始终在列（可编辑、不可删除、可恢复默认）。
+#[tauri::command]
+pub async fn scene_list_entries(state: State<'_, AppState>) -> Result<Vec<SceneEntry>, AppError> {
+    Ok(scene_service(&state).list_entries().await)
+}
+
+/// 新增自定义场景条目（T-502）：ID 由后端生成（`custom-N`），内置标记恒为 false；
+/// 名称 / 应用列表 / 关键字先归一（裁剪、去重）再校验（非法返回 E-CONFIG-004）。
+#[tauri::command]
+pub async fn scene_add_entry(
+    state: State<'_, AppState>,
+    entry: SceneEntry,
+) -> Result<SceneEntry, AppError> {
+    scene_service(&state).add_entry(entry).await
+}
+
+/// 更新场景条目（T-502）：内置条目可编辑；ID 与内置标记由后端保持不变，
+/// 内置条目的归属场景不可改（编码场景恒映射编码）。
+#[tauri::command]
+pub async fn scene_update_entry(
+    state: State<'_, AppState>,
+    entry: SceneEntry,
+) -> Result<(), AppError> {
+    scene_service(&state).update_entry(entry).await
+}
+
+/// 删除场景条目（T-502）：仅自定义条目；内置条目返回 E-CONFIG-005。
+#[tauri::command]
+pub async fn scene_delete_entry(
+    state: State<'_, AppState>,
+    entry_id: String,
+) -> Result<(), AppError> {
+    scene_service(&state).delete_entry(&entry_id).await
+}
+
+/// 恢复内置场景条目的 PRD 默认规则（T-502）：仅内置条目；
+/// 保持列表位置（排序即匹配优先级），返回恢复后的条目。
+#[tauri::command]
+pub async fn scene_restore_entry_default(
+    state: State<'_, AppState>,
+    entry_id: String,
+) -> Result<SceneEntry, AppError> {
+    scene_service(&state).restore_entry_default(&entry_id).await
+}
+
+/// 持久化场景条目排序（T-502 拖动排序）：`entry_ids` 须为当前全部条目 ID
+/// 的排列（长度与集合一致），否则拒绝（E-CONFIG-004）。
+#[tauri::command]
+pub async fn scene_reorder_entries(
+    state: State<'_, AppState>,
+    entry_ids: Vec<String>,
+) -> Result<(), AppError> {
+    scene_service(&state).reorder_entries(entry_ids).await
 }
