@@ -6,6 +6,7 @@ use tauri::State;
 
 use crate::error::AppError;
 use crate::services::asr::ModelInfo;
+use crate::services::punct::PunctModelInfo;
 use crate::state::AppState;
 
 /// 模型清单（含下载 / 激活 / 损坏状态），T-014 模型管理页数据源。
@@ -50,4 +51,30 @@ pub async fn asr_recognize_wav(
     wav_path: String,
 ) -> Result<String, AppError> {
     state.asr.recognize_wav(wav_path).await
+}
+
+// ---- 识别标点恢复模型管理（T-545，契约与前端 `src/api/asr.ts` 逐字对应） ----
+
+/// 标点模型卡片状态（未下载 / 已下载 / 损坏 / 下载中）。
+#[tauri::command]
+pub async fn punct_model_status(state: State<'_, AppState>) -> Result<PunctModelInfo, AppError> {
+    Ok(state.asr.punct_model_status().await)
+}
+
+/// 下载标点模型（幂等；进度经 `model:progress` 事件推送，model_id 见返回状态）。
+#[tauri::command]
+pub async fn download_punct_model(state: State<'_, AppState>) -> Result<(), AppError> {
+    state.asr.download_punct_model().await
+}
+
+/// 取消进行中的标点模型下载。
+#[tauri::command]
+pub async fn cancel_punct_model(state: State<'_, AppState>) -> Result<(), AppError> {
+    state.asr.cancel_punct_model().await
+}
+
+/// 删除标点模型；删除后状态回退为未下载，标点恢复降级为原文直出。
+#[tauri::command]
+pub async fn delete_punct_model(state: State<'_, AppState>) -> Result<(), AppError> {
+    state.asr.delete_punct_model().await
 }

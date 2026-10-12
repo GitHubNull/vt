@@ -34,3 +34,50 @@ export async function setActiveModel(modelId: string): Promise<void> {
 export async function asrRecognizeWav(wavPath: string): Promise<string> {
   return invoke<string>('asr_recognize_wav', { wavPath })
 }
+
+/* ---- 识别标点恢复（T-545，后端 services/punct.rs / commands/asr.rs） ---- */
+
+/** 标点模型稳定 ID（model:progress 事件的 model_id 过滤用；与后端常量一致）。 */
+export const PUNCT_MODEL_ID = 'punct-ct-transformer-zh-en-int8'
+
+/**
+ * 标点模型卡片状态（后端 PunctModelInfo 序列化形态，src-tauri/src/services/punct.rs）。
+ * 注：与 DownloadProgress 复用同一进度结构（src/api/types.ts）。
+ */
+export interface PunctModelInfo {
+  id: string
+  name: string
+  size_bytes: number
+  /** 已下载且哈希校验通过。 */
+  downloaded: boolean
+  /** 模型文件存在但校验失败（损坏，引导重新下载）。 */
+  invalid: boolean
+  /** 下载中进度（非下载中为 null）。 */
+  progress: {
+    downloaded_bytes: number
+    total_bytes: number
+    bytes_per_sec: number
+  } | null
+  /** 生效的模型存储目录。 */
+  models_dir: string
+}
+
+/** 标点模型卡片状态（未下载 / 已下载 / 损坏 / 下载中）。 */
+export async function punctModelStatus(): Promise<PunctModelInfo> {
+  return invoke<PunctModelInfo>('punct_model_status')
+}
+
+/** 下载标点模型（幂等；进度经 model:progress 事件推送）。 */
+export async function downloadPunctModel(): Promise<void> {
+  await invoke('download_punct_model')
+}
+
+/** 取消进行中的标点模型下载。 */
+export async function cancelPunctModel(): Promise<void> {
+  await invoke('cancel_punct_model')
+}
+
+/** 删除标点模型；删除后状态回退为未下载，标点恢复降级为原文直出。 */
+export async function deletePunctModel(): Promise<void> {
+  await invoke('delete_punct_model')
+}

@@ -33,6 +33,7 @@ use crate::error::AppError;
 use crate::events::{AppEvent, DownloadStatus, RecordingResultEvent};
 use crate::services::config_store::{ConfigSection, ConfigStore, ModelSource};
 use crate::services::model_download;
+use crate::services::punct::{PunctModelInfo, PunctService};
 use crate::services::session::SessionTracker;
 
 /// 错误编号：模型未下载 / 无可用模型（引导先下载模型）。
@@ -212,7 +213,7 @@ fn verify_file_hash(path: &Path, label: &str, expected: &str) -> Result<(), AppE
 }
 
 /// 字节切片转小写十六进制（避免额外依赖）。
-fn hex_lower(bytes: &[u8]) -> String {
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -306,6 +307,8 @@ pub struct AsrService {
     lifecycle: Arc<Mutex<()>>,
     /// 会话代次追踪（T-010）：结果回调按代次 / 取消标记判过期丢弃。
     tracker: Arc<SessionTracker>,
+    /// 识别标点恢复（T-545）：模型生命周期与推理执行，随识别输出句读。
+    punct: Arc<PunctService>,
 }
 
 impl AsrService {
@@ -315,6 +318,11 @@ impl AsrService {
         events: broadcast::Sender<AppEvent>,
         tracker: Arc<SessionTracker>,
     ) -> Self {
+        let punct = Arc::new(PunctService::new(
+            models_dir.clone(),
+            config.clone(),
+            events.clone(),
+        ));
         Self {
             models_dir,
             config,
@@ -325,6 +333,7 @@ impl AsrService {
             download_progress: Arc::new(RwLock::new(HashMap::new())),
             lifecycle: Arc::new(Mutex::new(())),
             tracker,
+            punct,
         }
     }
 
@@ -352,6 +361,8 @@ impl AsrService {
                         }
                         drop(engine);
                         self.verified.write().await.clear();
+                        // T-545：标点引擎与模型认证缓存一并重置（存储目录可能变更）。
+                        self.punct.reset().await;
                     }
                     Ok(_) => {}
                     Err(_) => break,
@@ -508,6 +519,7 @@ impl AsrService {
             download_progress: self.download_progress.clone(),
             lifecycle: self.lifecycle.clone(),
             tracker: self.tracker.clone(),
+            punct: self.punct.clone(),
         })
     }
 
@@ -654,6 +666,11 @@ impl AsrService {
 
         let events = self.events.clone();
         let tracker = self.tracker.clone();
+        // T-545：标点恢复在识别同一 `spawn_blocking` 语境执行（不阻塞事件循环）；
+        // 开关关闭零开销（不读模型、不加载引擎），模型未就绪原文直出（降级不报错）。
+        let models_dir = self.effective_models_dir().await;
+        let punct = self.punct.clone();
+        let punct_enabled = self.config.get().await.asr.punct.enabled;
         tokio::task::spawn_blocking(move || {
             let started = Instant::now();
             let prepared = resample_to_engine(&samples, sample_rate);
@@ -681,11 +698,14 @@ impl AsrService {
                 let _ = events.send(AppEvent::SessionFinished { session_id });
                 return;
             }
+            // T-545 标点恢复（PRD 3.1.5：位于后处理管线之前）：开关开启且模型可用时
+            // 恢复句读，供"删除结尾标点"等输出选项消费；不可用时原文直出。
+            let mut text = result.text;
+            if punct_enabled {
+                text = punct.punctuate_sync(&models_dir, &text);
+            }
             // 识别文本 → 后处理管线（T-011 消费；上屏在 T-012 串联）。
-            let _ = events.send(AppEvent::Recognized {
-                session_id,
-                text: result.text,
-            });
+            let _ = events.send(AppEvent::Recognized { session_id, text });
         });
     }
 
@@ -1010,6 +1030,26 @@ impl AsrService {
         .await
         .map_err(|err| AppError::Asr(ERR_INFERENCE, format!("推理任务失败: {err}")))?;
         Ok(result.text)
+    }
+
+    /// 标点模型卡片状态（T-545，命令 `punct_model_status` 数据源）。
+    pub async fn punct_model_status(&self) -> PunctModelInfo {
+        self.punct.status().await
+    }
+
+    /// 下载标点模型（幂等；进度经 `model:progress` 事件推送，T-545）。
+    pub async fn download_punct_model(&self) -> Result<(), AppError> {
+        self.punct.download().await
+    }
+
+    /// 取消进行中的标点模型下载（T-545）。
+    pub async fn cancel_punct_model(&self) -> Result<(), AppError> {
+        self.punct.cancel().await
+    }
+
+    /// 删除标点模型：状态回退为未下载，标点恢复降级为原文直出（T-545）。
+    pub async fn delete_punct_model(&self) -> Result<(), AppError> {
+        self.punct.delete().await
     }
 }
 

@@ -4,9 +4,10 @@
  * 模型卡片：档位 / 大小 / 说明 / 状态；下载进度 + 实时速度与预计剩余时间
  * （model:progress 事件）、取消 / 失败重试、切换激活（确认 + 即时生效）、
  * 删除（plugin-dialog 确认，删除激活模型给出回退提示）；
+ * 标点恢复模型卡片（T-545）：下载 / 进度 / 取消 / 删除 / 校验失败提示；
  * 下载设置：下载源（镜像默认 / 官方）、下载代理、模型存储位置（plugin-dialog 选择）。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Badge from 'primevue/badge'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
@@ -14,20 +15,121 @@ import Message from 'primevue/message'
 import ProgressBar from 'primevue/progressbar'
 import Select from 'primevue/select'
 import { confirm, open } from '@tauri-apps/plugin-dialog'
+import { listen } from '@tauri-apps/api/event'
 import SettingsRow from '../../components/SettingsRow.vue'
 import { useAsrStore } from '../../stores/asr'
 import { useConfigStore } from '../../stores/config'
+import {
+  cancelPunctModel,
+  deletePunctModel,
+  downloadPunctModel,
+  PUNCT_MODEL_ID,
+  punctModelStatus,
+} from '../../api/asr'
+import { EVENTS } from '../../api/events'
 import { toAppError } from '../../api/client'
-import { t } from '../../i18n'
+import { getMessage, t } from '../../i18n'
 
 const store = useAsrStore()
 const configStore = useConfigStore()
 /** 切换中的模型 ID（禁用重复操作）。 */
 const switchingId = ref(null)
 
+// ---- 标点恢复模型卡片（T-545）：独立于识别模型清单，进度按 model_id 过滤 ----
+const punct = ref(null)
+/** 标点进度事件监听取消句。 */
+let unlistenPunct = null
+
+async function loadPunct() {
+  try {
+    punct.value = await punctModelStatus()
+  } catch (error) {
+    store.lastError = toAppError(error)
+  }
+}
+
+/** 标点卡片状态（派生自 PunctModelInfo + 下载进度事件）。 */
+function punctStatus() {
+  const info = punct.value
+  if (!info) return 'missing'
+  if (info.progress) return 'downloading'
+  if (info.invalid) return 'invalid'
+  if (info.downloaded) return 'downloaded'
+  return 'missing'
+}
+
+const punctStatusText = computed(() => ({
+  downloading: t.general.models.statusDownloading,
+  downloaded: t.general.models.statusDownloaded,
+  invalid: t.general.models.statusInvalid,
+  missing: t.general.models.statusMissing,
+}))
+
+async function startPunctListener() {
+  try {
+    unlistenPunct = await listen(EVENTS.modelProgress, (event) => {
+      const payload = event.payload
+      if (payload.model_id !== PUNCT_MODEL_ID) return
+      if (payload.status === 'downloading' && punct.value) {
+        punct.value = {
+          ...punct.value,
+          progress: {
+            downloaded_bytes: payload.downloaded_bytes,
+            total_bytes: payload.total_bytes,
+            bytes_per_sec: payload.bytes_per_sec,
+          },
+        }
+      } else if (payload.status !== 'downloading') {
+        // 完成 / 失败 / 取消以服务端状态为准。
+        void loadPunct()
+      }
+    })
+  } catch {
+    // Webview 环境外（测试）不支持 listen：忽略
+  }
+}
+
+async function onPunctDownload() {
+  try {
+    await downloadPunctModel()
+  } catch (error) {
+    store.lastError = toAppError(error)
+  }
+  void loadPunct()
+}
+
+async function onPunctCancel() {
+  try {
+    await cancelPunctModel()
+  } catch (error) {
+    store.lastError = toAppError(error)
+  }
+  void loadPunct()
+}
+
+async function onPunctDelete() {
+  const ok = await confirm(getMessage('general.punct.deleteConfirm'), {
+    title: getMessage('general.punct.deleteTitle'),
+    kind: 'warning',
+  })
+  if (!ok) return
+  try {
+    await deletePunctModel()
+    await loadPunct()
+  } catch (error) {
+    store.lastError = toAppError(error)
+  }
+}
+
 onMounted(() => {
   void store.ensureLoaded()
   void configStore.ensureLoaded()
+  void loadPunct()
+  void startPunctListener()
+})
+
+onUnmounted(() => {
+  if (unlistenPunct) unlistenPunct()
 })
 
 const statusText = computed(() => ({
@@ -285,6 +387,57 @@ async function onDelete(model) {
             :label="t.general.models.delete"
             :disabled="switchingId !== null"
             @click="onDelete(model)"
+          />
+        </div>
+      </div>
+
+      <!-- 标点恢复模型（T-545）：单卡片，状态 / 进度 / 下载 / 删除。 -->
+      <div v-if="punct" class="settings-card model-card">
+        <div class="model-head">
+          <span class="model-name">{{ getMessage('general.punct.cardTitle') }}</span>
+          <Badge
+            :value="punctStatusText[punctStatus()]"
+            :severity="punctStatus() === 'invalid' ? 'danger' : 'secondary'"
+            class="model-status"
+          />
+        </div>
+        <p class="model-desc">{{ getMessage('general.punct.cardDesc') }}</p>
+        <p class="model-meta">
+          <span>{{ t.general.models.sizeLabel }}：{{ formatBytes(punct.size_bytes) }}</span>
+        </p>
+
+        <p v-if="punctStatus() === 'invalid'" class="model-invalid-hint">
+          {{ t.general.models.invalidHint }}
+        </p>
+
+        <div v-if="punctStatus() === 'downloading'" class="model-actions">
+          <ProgressBar :value="progressPercent(punct)" class="model-progress" />
+          <span class="model-progress-text">{{ progressPercent(punct) }}%</span>
+          <span class="model-speed"
+            >{{ speedText(punct)
+            }}<template v-if="etaText(punct)"> · {{ etaText(punct) }}</template></span
+          >
+          <Button
+            type="button"
+            severity="secondary"
+            :label="t.general.models.cancelDownload"
+            @click="onPunctCancel"
+          />
+        </div>
+        <div v-else class="model-actions">
+          <Button
+            v-if="punctStatus() === 'missing'"
+            type="button"
+            icon="pi pi-download"
+            :label="t.general.models.download"
+            @click="onPunctDownload"
+          />
+          <Button
+            v-if="punctStatus() !== 'missing'"
+            type="button"
+            severity="danger"
+            :label="t.general.models.delete"
+            @click="onPunctDelete"
           />
         </div>
       </div>
