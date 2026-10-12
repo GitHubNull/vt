@@ -15,6 +15,7 @@ pub mod openai_compatible;
 pub mod presets;
 pub mod provider;
 pub mod service;
+pub mod templates;
 
 pub use ollama::OllamaProvider;
 pub use openai_compatible::OpenAiCompatibleProvider;

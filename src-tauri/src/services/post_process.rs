@@ -20,8 +20,9 @@ use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::events::AppEvent;
-use crate::services::config_store::{ConfigSection, ConfigStore};
+use crate::services::config_store::{ConfigSection, ConfigStore, SceneEntry};
 use crate::services::dict::{DictService, ReplaceRule};
+use crate::services::scene::SceneKind;
 use crate::services::session::SessionTracker;
 use crate::services::stages::{
     FilterFillersStage, ProperNounStage, RemoveTrailingPunctStage, SmartNumberStage,
@@ -37,6 +38,10 @@ pub struct PipelineContext {
     pub text: String,
     /// 短路标记：置位后跳过后续 Stage（v0.5 AI Stage 预留）。
     pub short_circuit: bool,
+    /// 录音开始时快照的当前场景（T-501/T-502；None = 未识别 / 未知）。
+    pub scene: Option<SceneKind>,
+    /// 录音开始时快照的场景规则条目（T-502；None = 未配置，走通用设置 / 内置默认）。
+    pub scene_entry: Option<SceneEntry>,
 }
 
 impl PipelineContext {
@@ -45,7 +50,16 @@ impl PipelineContext {
             session_id,
             text,
             short_circuit: false,
+            scene: None,
+            scene_entry: None,
         }
+    }
+
+    /// 附带场景快照（T-502：录音开始时确定，录音期间切换窗口不改变本次场景）。
+    pub fn with_scene(mut self, scene: SceneKind, entry: Option<SceneEntry>) -> Self {
+        self.scene = Some(scene);
+        self.scene_entry = entry;
+        self
     }
 }
 
