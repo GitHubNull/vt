@@ -1,10 +1,11 @@
 <script setup>
 /**
- * 词典 › 替换词典（T-011，F-DICT-01、PRD 3.4.1）。
+ * 词典 › 替换词典（T-011，F-DICT-01、PRD 3.4.1；T-523 导入导出）。
  * 对照原型 PixPin_2026-10-09_21-32-16.png：说明文案、计数、添加 / 保存、
  * 错误词 → 正确词列表、行内启停与删除；搜索框为原型新增项。
  * 删除确认走 @tauri-apps/plugin-dialog（tech/03 3.3）；
- * 导入 / 导出文件路径由系统原生对话框选定（plugin-dialog save / open）。
+ * 导出经系统保存对话框（plugin-dialog save）写统一格式（v2）文件；
+ * 导入走导入向导（选文件 → 校验结果 → 冲突策略 → 报告，T-523）。
  */
 import { computed, onMounted, ref } from 'vue'
 import Button from 'primevue/button'
@@ -15,11 +16,13 @@ import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Textarea from 'primevue/textarea'
 import ToggleSwitch from 'primevue/toggleswitch'
-import { confirm, open, save } from '@tauri-apps/plugin-dialog'
+import { confirm, save } from '@tauri-apps/plugin-dialog'
+import { dictExportUnified } from '../../api/dict'
 import { useDictStore, MAX_RULES } from '../../stores/dict'
 import { useConfigStore } from '../../stores/config'
 import { toAppError } from '../../api/client'
 import { t } from '../../i18n'
+import ImportWizard from './ImportWizard.vue'
 
 const store = useDictStore()
 const configStore = useConfigStore()
@@ -50,27 +53,24 @@ const filteredRules = computed(() => {
 
 const counterText = computed(() => `${store.rules.length} / ${MAX_RULES}`)
 
-/** 导出 / 导入状态与提示（{ ok, text }）。 */
+/** 导出状态与提示（{ ok, text }）。 */
 const exporting = ref(false)
-const importing = ref(false)
 const ioNotice = ref(null)
+/** 导入向导可见性（T-523）。 */
+const wizardVisible = ref(false)
 
-/** 导出：系统原生保存对话框选定路径 → 后端写文件；取消对话框则静默返回。 */
+/** 导出：系统原生保存对话框选定路径 → 后端写统一格式（v2）文件；取消则静默返回。 */
 async function onExport() {
   exporting.value = true
   ioNotice.value = null
   try {
     const path = await save({
       title: t.dict.replace.exportTitle,
-      defaultPath: 'vibetype-dict.json',
+      defaultPath: 'vibetype-replace-dict.json',
       filters: [{ name: 'JSON', extensions: ['json'] }],
     })
     if (!path) return
-    const count = await store.exportRulesTo(path)
-    if (count === null) {
-      ioNotice.value = { ok: false, text: ioErrorText('export') }
-      return
-    }
+    const count = await dictExportUnified('replace', path)
     ioNotice.value = {
       ok: true,
       text: t.dict.replace.exportDone
@@ -78,47 +78,14 @@ async function onExport() {
         .replace('{path}', path),
     }
   } catch (error) {
+    const err = toAppError(error)
     ioNotice.value = {
       ok: false,
-      text: `${t.dict.replace.exportFailed}（${t.common.errorCode} ${toAppError(error).code}）`,
+      text: `${t.dict.replace.exportFailed}：${err.message}（${t.common.errorCode} ${err.code}）`,
     }
   } finally {
     exporting.value = false
   }
-}
-
-/** 导入：系统原生打开对话框选定 JSON → 后端校验并导入；取消对话框则静默返回。 */
-async function onImport() {
-  importing.value = true
-  ioNotice.value = null
-  try {
-    const path = await open({
-      title: t.dict.replace.importTitle,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    })
-    if (!path) return
-    const count = await store.importRulesFrom(path)
-    if (count === null) {
-      // JSON 结构非法等失败：展示后端返回的错误信息。
-      ioNotice.value = { ok: false, text: ioErrorText('import') }
-      return
-    }
-    ioNotice.value = { ok: true, text: t.dict.replace.importDone.replace('{count}', String(count)) }
-  } catch (error) {
-    ioNotice.value = {
-      ok: false,
-      text: `${t.dict.replace.importFailed}（${t.common.errorCode} ${toAppError(error).code}）`,
-    }
-  } finally {
-    importing.value = false
-  }
-}
-
-/** 失败提示：优先取 store 记录的后端错误信息（含结构非法），无则给通用文案。 */
-function ioErrorText(kind) {
-  const generic = kind === 'export' ? t.dict.replace.exportFailed : t.dict.replace.importFailed
-  const err = store.lastError
-  return err ? `${generic}：${err.message}（${t.common.errorCode} ${err.code}）` : generic
 }
 
 const errorText = computed(() =>
@@ -213,10 +180,9 @@ function updateDictEnabled(enabled) {
           <Button
             type="button"
             icon="pi pi-upload"
-            :label="importing ? t.dict.replace.importing : t.dict.replace.import"
-            :loading="importing"
+            :label="t.dict.replace.import"
             severity="secondary"
-            @click="onImport"
+            @click="wizardVisible = true"
           />
           <ToggleSwitch
             :model-value="configStore.sections.dict.enabled"
@@ -293,6 +259,8 @@ function updateDictEnabled(enabled) {
     <Message v-if="store.lastError" severity="error" class="settings-error">{{
       errorText
     }}</Message>
+
+    <ImportWizard v-model:visible="wizardVisible" kind="replace" />
 
     <Dialog
       v-model:visible="editorVisible"

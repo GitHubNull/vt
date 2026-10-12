@@ -1,8 +1,9 @@
 <script setup>
 /**
- * 词典 › 专有名词（T-522，F-DICT-02、PRD 3.4.2）。
+ * 词典 › 专有名词（T-522，F-DICT-02、PRD 3.4.2；T-523 导入导出）。
  * 标准写法 + 读音别名（多值，逐行编辑）+ 备注；行内启停与删除；
- * 搜索框带清除按钮（沿用词典页约定）；删除确认走 plugin-dialog。
+ * 搜索框带清除按钮（沿用词典页约定）；删除确认走 plugin-dialog；
+ * 导出经系统保存对话框写统一格式（v2）文件；导入走导入向导（T-523）。
  */
 import { computed, onMounted, ref } from 'vue'
 import Button from 'primevue/button'
@@ -13,13 +14,30 @@ import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Textarea from 'primevue/textarea'
 import ToggleSwitch from 'primevue/toggleswitch'
-import { confirm } from '@tauri-apps/plugin-dialog'
+import { confirm, save } from '@tauri-apps/plugin-dialog'
+import { properNounExportUnified } from '../../api/properNouns'
 import { useDictStore, MAX_NOUNS } from '../../stores/dict'
 import { useConfigStore } from '../../stores/config'
+import { toAppError } from '../../api/client'
 import { t } from '../../i18n'
+import { i18nText } from './importWizard'
+import ImportWizard from './ImportWizard.vue'
 
 const store = useDictStore()
 const configStore = useConfigStore()
+
+/**
+ * 本页导出 / 导入文案：i18n key 与取值列入 T-523 报告片段；
+ * 合并前命中 `getMessage` 兜底（见 importWizard.ts 说明）。
+ */
+const nounsIo = {
+  export: i18nText('dict.properNouns.export', '导出'),
+  import: i18nText('dict.properNouns.import', '导入'),
+  exporting: i18nText('dict.properNouns.exporting', '导出中…'),
+  exportTitle: i18nText('dict.properNouns.exportTitle', '导出专有名词'),
+  exportDone: i18nText('dict.properNouns.exportDone', '已导出 {count} 条专有名词到 {path}。'),
+  exportFailed: i18nText('dict.properNouns.exportFailed', '导出失败'),
+}
 
 const search = ref('')
 /** 编辑对话框状态（null = 关闭；aliasesText 为逐行文本形态）。 */
@@ -31,10 +49,42 @@ const editorVisible = computed({
   },
 })
 
+/** 导出状态与提示（{ ok, text }）；导入向导可见性。 */
+const exporting = ref(false)
+const ioNotice = ref(null)
+const wizardVisible = ref(false)
+
 onMounted(() => {
   void store.ensureNounsLoaded()
   void configStore.ensureLoaded()
 })
+
+/** 导出：系统原生保存对话框选定路径 → 后端写统一格式（v2）文件；取消则静默返回。 */
+async function onExport() {
+  exporting.value = true
+  ioNotice.value = null
+  try {
+    const path = await save({
+      title: nounsIo.exportTitle,
+      defaultPath: 'vibetype-proper-nouns.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (!path) return
+    const count = await properNounExportUnified(path)
+    ioNotice.value = {
+      ok: true,
+      text: nounsIo.exportDone.replace('{count}', String(count)).replace('{path}', path),
+    }
+  } catch (error) {
+    const err = toAppError(error)
+    ioNotice.value = {
+      ok: false,
+      text: `${nounsIo.exportFailed}：${err.message}（${t.common.errorCode} ${err.code}）`,
+    }
+  } finally {
+    exporting.value = false
+  }
+}
 
 const filteredNouns = computed(() => {
   const query = search.value.trim().toLowerCase()
@@ -154,6 +204,21 @@ function updateProperNounsEnabled(enabled) {
             :disabled="store.nounsFull"
             @click="openAdd"
           />
+          <Button
+            type="button"
+            icon="pi pi-download"
+            :label="exporting ? nounsIo.exporting : nounsIo.export"
+            :loading="exporting"
+            severity="secondary"
+            @click="onExport"
+          />
+          <Button
+            type="button"
+            icon="pi pi-upload"
+            :label="nounsIo.import"
+            severity="secondary"
+            @click="wizardVisible = true"
+          />
           <ToggleSwitch
             :model-value="configStore.sections.dict.proper_nouns.enabled"
             :aria-label="t.dict.properNouns.masterToggle"
@@ -164,6 +229,9 @@ function updateProperNounsEnabled(enabled) {
         <p v-if="store.nounsFull" class="dict-hint">{{ t.dict.properNouns.limitHint }}</p>
         <p v-if="!configStore.sections.dict.proper_nouns.enabled" class="dict-hint">
           {{ t.dict.properNouns.disabledHint }}
+        </p>
+        <p v-if="ioNotice" class="dict-hint" :class="{ 'dict-hint-error': !ioNotice.ok }">
+          {{ ioNotice.text }}
         </p>
 
         <DataTable
@@ -229,6 +297,8 @@ function updateProperNounsEnabled(enabled) {
     <Message v-if="store.lastError" severity="error" class="settings-error">{{
       errorText
     }}</Message>
+
+    <ImportWizard v-model:visible="wizardVisible" kind="proper_nouns" />
 
     <Dialog
       v-model:visible="editorVisible"
@@ -330,6 +400,10 @@ function updateProperNounsEnabled(enabled) {
   font-size: 12.5px;
   color: var(--vt-color-warning);
   border-bottom: 1px solid var(--vt-color-border);
+}
+
+.dict-hint-error {
+  color: var(--vt-color-error);
 }
 
 .dict-delete-mark {
