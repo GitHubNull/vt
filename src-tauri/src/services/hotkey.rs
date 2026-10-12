@@ -5,6 +5,9 @@
 //!   AudioService（tech/04 4.2 录音控制通道，容量 8）；
 //! - 监听 `config:changed` 的 hotkey 节，平滑重注册：先注销再注册，失败回滚旧
 //!   快捷键并广播 `hotkey:error` 事件（错误编号 E-HOTKEY-001，T-004 SPEC 步骤 4/5）；
+//! - 快捷键冲突检测（F-SYS-03 / T-543）：应用内重复校验（`validate_hotkey_set`，
+//!   保存被拒绝并指出冲突项）、注册失败归因（被占用 E-HOTKEY-001 / 平台级
+//!   E-HOTKEY-004）与 OS 常用组合预警表（`os_preset_warnings`，仅警告允许保存）；
 //! - 快捷键事件只驱动录音状态机，不做任何 UI 操作（tech/05 5.3.1）。
 //!
 //! 已知平台限制（tech/09 9.2.1）：
@@ -17,19 +20,33 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 use tracing::warn;
 
 use crate::error::AppError;
 use crate::events::AppEvent;
-use crate::platform::hotkey::{HotkeyBackend, HotkeyError, RawHotkeyEvent};
+use crate::platform::hotkey::{
+    normalize_accelerator, os_preset_conflicts, HotkeyBackend, HotkeyError, RawHotkeyEvent,
+};
 use crate::services::config_store::{ConfigSection, ConfigStore, HotkeyConfig, HotkeyMode};
 
-/// 快捷键注册失败错误编号（T-004 SPEC 步骤 5）。
+/// 快捷键注册失败错误编号（T-004 SPEC 步骤 5；T-543 归因：被占用 / 系统保留）。
 pub const ERR_REGISTER_FAILED: u32 = 1;
 /// 快捷键串非法（组合格式无法解析，E-HOTKEY-002）。
 pub const ERR_INVALID_SPEC: u32 = 2;
+/// 应用内快捷键冲突（重复，保存被拒绝，E-HOTKEY-003，T-543）。
+pub const ERR_DUPLICATE: u32 = 3;
+/// 平台级注册失败（低级钩子安装失败 / 系统拒绝等，非占用归因，E-HOTKEY-004，T-543）。
+pub const ERR_PLATFORM_REGISTER: u32 = 4;
+
+// 错误编号速查（tech/04 4.6：编号出现在用户可见提示，映射文案在 src/i18n/）：
+// - E-HOTKEY-001 注册失败：已被其他应用占用 / 系统保留（三平台注册冲突路径，
+//   见 platform::hotkey::classify_register_error 归因）；
+// - E-HOTKEY-002 快捷键串非法（含鼠标侧键暂不支持）；
+// - E-HOTKEY-003 应用内快捷键重复：保存被拒绝并指出冲突项（T-543）；
+// - E-HOTKEY-004 平台级注册失败：非占用的平台错误，保留原始信息供诊断（T-543）。
 
 /// 录音控制命令（T-004 SPEC 步骤 1）：快捷键 / 命令层 / 小窗统一出口。
 ///
@@ -92,6 +109,163 @@ impl ModeMapper {
     }
 }
 
+/// 应用内快捷键槽位标识：录音触发键（配置 `hotkey.trigger`）。
+pub const SLOT_TRIGGER: &str = "trigger";
+/// 应用内快捷键槽位标识：取消录音键（配置 `hotkey.cancel_trigger`）。
+pub const SLOT_CANCEL: &str = "cancel_trigger";
+
+/// 待校验的快捷键槽位（T-543 应用内冲突校验的通用入参）。
+///
+/// 录音触发键 / 取消键之外，将来的模板快捷键（T-534）等以追加槽位的方式
+/// 进入同一套校验，无需新增错误类型或校验入口。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HotkeySlot {
+    /// 槽位标识（`trigger` / `cancel_trigger`；模板键接入后扩展 `template:<id>`）。
+    pub id: String,
+    /// 快捷键串（录入组件契约格式，如 `"ControlLeft+ShiftLeft+Space"`）。
+    pub spec: String,
+}
+
+impl HotkeySlot {
+    pub fn new(id: &str, spec: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            spec: spec.to_string(),
+        }
+    }
+}
+
+/// 一组应用内冲突：≥ 2 个槽位归一化后为同一组合。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HotkeyConflictGroup {
+    /// 归一化后的重复组合（左右修饰键等价、修饰键顺序无关，见
+    /// `platform::hotkey::normalize_accelerator`）。
+    pub normalized: String,
+    /// 冲突槽位 id（按槽位表顺序，≥ 2 个）。
+    pub ids: Vec<String>,
+}
+
+/// 应用内快捷键冲突：保存被拒绝（E-HOTKEY-003，PRD 3.1.1 规则 7）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct DuplicateHotkeyError {
+    /// 全部冲突组（可能多组同时重复）。
+    pub conflicts: Vec<HotkeyConflictGroup>,
+}
+
+impl std::fmt::Display for DuplicateHotkeyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 指出冲突项（NFR：用户可见错误必须可定位）："a、b 使用了相同组合（X）"。
+        write!(f, "应用内快捷键重复：")?;
+        for (index, group) in self.conflicts.iter().enumerate() {
+            if index > 0 {
+                write!(f, "；")?;
+            }
+            write!(
+                f,
+                "{} 使用了相同组合（{}）",
+                group.ids.join("、"),
+                group.normalized
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// OS 常用组合预警（命中仅警告、允许保存，PRD 3.1.1 规则 7）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OsPresetWarning {
+    /// 命中的槽位 id。
+    pub id: String,
+    /// 归一化组合。
+    pub normalized: String,
+    /// 用途标识（i18n 键后缀：`hotkey.conflict.osPresets.<usage>`）。
+    pub usage: String,
+}
+
+/// 冲突校验报告：应用内冲突（保存被拒绝）+ OS 常用组合预警（允许保存）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HotkeyValidationReport {
+    pub conflicts: Vec<HotkeyConflictGroup>,
+    pub warnings: Vec<OsPresetWarning>,
+}
+
+/// 应用内冲突校验（T-543 SPEC 步骤 1）：快捷键集合（录音触发键、取消键，将来模板键）
+/// 经归一化等价比较（左右修饰键等价、修饰键顺序无关）后不得重复。
+///
+/// 空串语义为"未设置"，与非法串（鼠标侧键、`Unidentified`、主键位出现修饰键等）
+/// 一并**不参与**重复比较——非法串由注册路径的 E-HOTKEY-002 专门拒绝。
+pub fn validate_hotkey_set(slots: &[HotkeySlot]) -> Result<(), DuplicateHotkeyError> {
+    let mut groups: Vec<HotkeyConflictGroup> = Vec::new();
+    for slot in slots {
+        let Some(normalized) = normalize_accelerator(&slot.spec) else {
+            continue;
+        };
+        match groups
+            .iter_mut()
+            .find(|group| group.normalized == normalized)
+        {
+            Some(group) => group.ids.push(slot.id.clone()),
+            None => groups.push(HotkeyConflictGroup {
+                normalized,
+                ids: vec![slot.id.clone()],
+            }),
+        }
+    }
+    let conflicts: Vec<HotkeyConflictGroup> = groups
+        .into_iter()
+        .filter(|group| group.ids.len() > 1)
+        .collect();
+    if conflicts.is_empty() {
+        Ok(())
+    } else {
+        Err(DuplicateHotkeyError { conflicts })
+    }
+}
+
+/// 校验配置节中的全部快捷键（录音触发键 + 取消键）无重复。
+///
+/// `commands/config.rs` 保存 hotkey 节前的权威校验入口（E-HOTKEY-003 拒绝）；
+/// 模板快捷键（T-534）接入后在其保存路径按同一函数追加槽位。
+pub fn validate_hotkey_config(config: &HotkeyConfig) -> Result<(), DuplicateHotkeyError> {
+    validate_hotkey_set(&[
+        HotkeySlot::new(SLOT_TRIGGER, &config.trigger),
+        HotkeySlot::new(SLOT_CANCEL, &config.cancel_trigger),
+    ])
+}
+
+/// 对快捷键集合做 OS 常用组合预警匹配（T-543 SPEC 步骤 3；三平台清单见
+/// `platform::hotkey::os_presets`）。只提示不拒绝：保存不受影响。
+pub fn os_preset_warnings(slots: &[HotkeySlot]) -> Vec<OsPresetWarning> {
+    let mut warnings = Vec::new();
+    for slot in slots {
+        let Some(normalized) = normalize_accelerator(&slot.spec) else {
+            continue;
+        };
+        for usage in os_preset_conflicts(&normalized) {
+            warnings.push(OsPresetWarning {
+                id: slot.id.clone(),
+                normalized: normalized.clone(),
+                usage: usage.to_string(),
+            });
+        }
+    }
+    warnings
+}
+
+/// 通用校验入口（`validate_hotkeys` 命令与配置保存共用）：
+/// 一次调用同时给出应用内冲突组与逐槽位 OS 预警。
+pub fn validate_hotkeys(slots: &[HotkeySlot]) -> HotkeyValidationReport {
+    let conflicts = validate_hotkey_set(slots)
+        .err()
+        .map(|err| err.conflicts)
+        .unwrap_or_default();
+    let warnings = os_preset_warnings(slots);
+    HotkeyValidationReport {
+        conflicts,
+        warnings,
+    }
+}
+
 /// HotkeyService：持有后端与注册状态，事件循环在 `start()` 中运行。
 pub struct HotkeyService {
     backend: Arc<dyn HotkeyBackend>,
@@ -142,9 +316,18 @@ impl HotkeyService {
                 HotkeyError::InvalidAccelerator(_) | HotkeyError::MouseKeyUnsupported(_) => {
                     AppError::Hotkey(ERR_INVALID_SPEC, err.to_string())
                 }
-                _ => AppError::Hotkey(
+                // 平台级失败（低级钩子安装失败 / 系统拒绝等），保留原始信息供诊断（E-HOTKEY-004）。
+                HotkeyError::Platform(details) => AppError::Hotkey(
+                    ERR_PLATFORM_REGISTER,
+                    format!("快捷键 {} 注册失败：{details}", config.trigger),
+                ),
+                // 被其他应用占用 / 系统保留（三平台注册冲突路径的统一归因，E-HOTKEY-001）。
+                HotkeyError::RegisterFailed => AppError::Hotkey(
                     ERR_REGISTER_FAILED,
-                    format!("快捷键 {} 注册失败（可能被占用）", config.trigger),
+                    format!(
+                        "快捷键 {} 注册失败：可能已被其他应用占用或被系统保留，请更换按键",
+                        config.trigger
+                    ),
                 ),
             });
         }
@@ -353,5 +536,207 @@ mod tests {
 
         handle.abort();
         let _ = std::fs::remove_dir_all(&config_dir);
+    }
+
+    #[tokio::test]
+    async fn platform_register_failure_reports_e_hotkey_004() {
+        let backend = Arc::new(MockHotkeyBackend::new());
+        let (service, _rx) = test_service(backend.clone());
+        service
+            .apply_config(&HotkeyConfig::default())
+            .await
+            .unwrap();
+        // 平台级失败（非占用归因，如低级钩子安装失败）→ E-HOTKEY-004 且保留诊断信息。
+        *backend.next_error.lock().unwrap() = Some(HotkeyError::Platform(
+            "钩子线程启动失败: thread pool exhausted".to_string(),
+        ));
+        let config = HotkeyConfig {
+            trigger: "F13".to_string(),
+            ..Default::default()
+        };
+        let err = service.apply_config(&config).await.unwrap_err();
+        assert_eq!(err.code(), "E-HOTKEY-004");
+        assert!(err.message().contains("钩子线程启动失败"), "保留诊断信息");
+        // 回滚仍生效：旧键（默认 Alt+R）重新注册。
+        assert_eq!(backend.current().as_deref(), Some("AltLeft+KeyR"));
+    }
+
+    #[tokio::test]
+    async fn occupied_register_failure_keeps_e_hotkey_001_with_guidance() {
+        let backend = Arc::new(MockHotkeyBackend::new());
+        let (service, _rx) = test_service(backend.clone());
+        service
+            .apply_config(&HotkeyConfig::default())
+            .await
+            .unwrap();
+        backend
+            .fail_next
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let config = HotkeyConfig {
+            trigger: "F13".to_string(),
+            ..Default::default()
+        };
+        let err = service.apply_config(&config).await.unwrap_err();
+        // 被占用归因不变（E-HOTKEY-001），提示含"占用"引导。
+        assert_eq!(err.code(), "E-HOTKEY-001");
+        assert!(err.message().contains("占用"));
+    }
+
+    fn slot(id: &str, spec: &str) -> HotkeySlot {
+        HotkeySlot::new(id, spec)
+    }
+
+    #[test]
+    fn validate_accepts_distinct_hotkeys() {
+        let slots = [
+            slot(SLOT_TRIGGER, "AltLeft+KeyR"),
+            slot(SLOT_CANCEL, "Escape"),
+        ];
+        assert!(validate_hotkey_set(&slots).is_ok());
+        // 默认配置（触发键 + Esc）天然无冲突。
+        assert!(validate_hotkey_config(&HotkeyConfig::default()).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_duplicates_and_names_conflicts() {
+        let slots = [
+            slot(SLOT_TRIGGER, "ControlLeft+ShiftLeft+Space"),
+            slot(SLOT_CANCEL, "ControlLeft+ShiftLeft+Space"),
+        ];
+        let err = validate_hotkey_set(&slots).unwrap_err();
+        assert_eq!(err.conflicts.len(), 1);
+        let group = &err.conflicts[0];
+        assert_eq!(group.normalized, "Control+Shift+Space");
+        assert_eq!(group.ids, vec![SLOT_TRIGGER, SLOT_CANCEL]);
+        // Display 指出冲突项（NFR：错误可定位）。
+        let text = err.to_string();
+        assert!(text.contains(SLOT_TRIGGER) && text.contains(SLOT_CANCEL));
+        assert!(text.contains("Control+Shift+Space"));
+    }
+
+    #[test]
+    fn validate_equates_left_right_modifiers_and_modifier_order() {
+        // 左右修饰键等价（平台不区分修饰位，tech/09 9.2.1）。
+        let slots = [
+            slot(SLOT_TRIGGER, "AltLeft+KeyR"),
+            slot(SLOT_CANCEL, "AltRight+KeyR"),
+        ];
+        assert_eq!(
+            validate_hotkey_set(&slots).unwrap_err().conflicts[0].normalized,
+            "Alt+KeyR"
+        );
+        // 修饰键顺序无关。
+        let slots = [
+            slot(SLOT_TRIGGER, "ShiftLeft+ControlLeft+Space"),
+            slot(SLOT_CANCEL, "ControlRight+ShiftRight+Space"),
+        ];
+        assert!(validate_hotkey_set(&slots).is_err());
+        // 单修饰键作触发键：主键区分左右（物理键不同），同侧才判重。
+        let slots = [
+            slot(SLOT_TRIGGER, "AltRight"),
+            slot(SLOT_CANCEL, "AltRight"),
+        ];
+        assert!(validate_hotkey_set(&slots).is_err());
+        let slots = [slot(SLOT_TRIGGER, "AltRight"), slot(SLOT_CANCEL, "AltLeft")];
+        assert!(validate_hotkey_set(&slots).is_ok());
+    }
+
+    #[test]
+    fn validate_ignores_empty_and_invalid_specs() {
+        // 空键 = 未设置；多槽位同为空不构成冲突。
+        let slots = [slot(SLOT_TRIGGER, ""), slot(SLOT_CANCEL, "")];
+        assert!(validate_hotkey_set(&slots).is_ok());
+        // 非法串（鼠标侧键 / Unidentified / 修饰键占主键位）不参与比较，由注册路径拒绝。
+        let slots = [
+            slot(SLOT_TRIGGER, "MouseBack"),
+            slot(SLOT_CANCEL, "MouseBack"),
+        ];
+        assert!(validate_hotkey_set(&slots).is_ok());
+        let slots = [
+            slot(SLOT_TRIGGER, "AltLeft+Unidentified"),
+            slot(SLOT_CANCEL, "AltRight+Unidentified"),
+        ];
+        assert!(validate_hotkey_set(&slots).is_ok());
+        let slots = [
+            slot(SLOT_TRIGGER, "KeyC+KeyD"),
+            slot(SLOT_CANCEL, "KeyC+KeyD"),
+        ];
+        assert!(validate_hotkey_set(&slots).is_ok());
+    }
+
+    #[test]
+    fn validate_dedupes_repeated_modifiers_before_compare() {
+        // ControlLeft+ControlRight+KeyC 与 ControlRight+KeyC 同一位集合。
+        let slots = [
+            slot(SLOT_TRIGGER, "ControlLeft+ControlRight+KeyC"),
+            slot(SLOT_CANCEL, "ControlRight+KeyC"),
+        ];
+        assert_eq!(
+            validate_hotkey_set(&slots).unwrap_err().conflicts[0].normalized,
+            "Control+KeyC"
+        );
+    }
+
+    #[test]
+    fn validate_reports_multiple_conflict_groups() {
+        let slots = [
+            slot("a", "KeyA"),
+            slot("b", "KeyB"),
+            slot("c", "KeyA"),
+            slot("d", "KeyB"),
+            slot("e", "KeyC"),
+        ];
+        let err = validate_hotkey_set(&slots).unwrap_err();
+        assert_eq!(err.conflicts.len(), 2);
+    }
+
+    #[test]
+    fn validate_hotkey_config_rejects_trigger_equal_cancel() {
+        let config = HotkeyConfig {
+            cancel_trigger: "AltLeft+KeyR".to_string(),
+            ..Default::default()
+        };
+        let err = validate_hotkey_config(&config).unwrap_err();
+        assert_eq!(err.conflicts[0].ids, vec![SLOT_TRIGGER, SLOT_CANCEL]);
+    }
+
+    #[test]
+    fn os_preset_warnings_flag_common_combos_only() {
+        // 平台相关：取当前平台表中的第一条做正例（表条目在三平台各自有维护）。
+        let preset = &crate::platform::hotkey::presets()[0];
+        let slots = [
+            HotkeySlot::new(SLOT_TRIGGER, preset.normalized),
+            slot(SLOT_CANCEL, "Escape"),
+        ];
+        let warnings = os_preset_warnings(&slots);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].id, SLOT_TRIGGER);
+        assert_eq!(warnings[0].normalized, preset.normalized);
+        assert_eq!(warnings[0].usage, preset.usage);
+
+        // 非常用组合（默认键）与空 / 非法串均不告警。
+        let slots = [
+            slot(SLOT_TRIGGER, "AltLeft+KeyR"),
+            slot(SLOT_CANCEL, ""),
+            slot("bad", "MouseBack"),
+        ];
+        assert!(os_preset_warnings(&slots).is_empty());
+    }
+
+    #[test]
+    fn validate_hotkeys_report_combines_conflicts_and_warnings() {
+        // 平台相关构造：第一条预警条目 + 一组应用内重复（避开预警组合）。
+        let preset = &crate::platform::hotkey::presets()[0];
+        let slots = [
+            HotkeySlot::new(SLOT_TRIGGER, preset.normalized),
+            HotkeySlot::new(SLOT_CANCEL, preset.normalized),
+        ];
+        let report = validate_hotkeys(&slots);
+        assert_eq!(report.conflicts.len(), 1);
+        // 同一组合同时命中预警（冲突与预警正交：冲突拒绝保存，预警不拦截）；
+        // 两个槽位都是该组合 → 各自产出一条预警。
+        assert_eq!(report.warnings.len(), 2);
+        assert_eq!(report.warnings[0].usage, preset.usage);
+        assert_eq!(report.warnings[1].usage, preset.usage);
     }
 }

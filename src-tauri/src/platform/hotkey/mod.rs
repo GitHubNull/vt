@@ -24,6 +24,11 @@ mod windows_composite;
 mod windows_llhook;
 
 mod modifier_key;
+mod normalize;
+mod os_presets;
+
+pub use normalize::normalize_accelerator;
+pub use os_presets::{os_preset_conflicts, presets, OsPresetHotkey};
 
 /// 后端上报的原始按键事件（Pressed / Released）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +102,21 @@ fn modifier_from_token(token: &str) -> Option<Modifiers> {
     }
 }
 
+/// 注册失败归因（T-543 SPEC 步骤 2）：区分"被占用 / 系统保留"与平台级失败。
+///
+/// global-hotkey 的错误经插件以字符串透出（`Error::GlobalHotKey(String)`）：
+/// - `"HotKey already registered"`：`RegisterHotKey` 的 `ERROR_HOTKEY_ALREADY_REGISTERED`
+///   （Windows）、X11 `GrabKey` Access 冲突（Linux）、Carbon `EventHotKey` 冲突（macOS）
+///   —— 三个平台的"被占用"路径统一归 `RegisterFailed`；
+/// - 其余（macOS 系统拒绝、X11 连接错误等）：归 `Platform` 并保留原始信息供诊断。
+fn classify_register_error(plugin_message: &str) -> HotkeyError {
+    if plugin_message.to_lowercase().contains("already registered") {
+        HotkeyError::RegisterFailed
+    } else {
+        HotkeyError::Platform(plugin_message.to_string())
+    }
+}
+
 /// 全局快捷键后端抽象：`register` 成功后事件经构造时给定的通道上报。
 pub trait HotkeyBackend: Send + Sync {
     /// 注册快捷键；事件通过 `RawHotkeyEvent` 通道上报（Pressed / Released）。
@@ -135,8 +155,8 @@ impl HotkeyBackend for TauriHotkeyBackend {
                     tracing::warn!("快捷键事件通道已满，丢弃事件");
                 }
             })
-            // 解析已在上方完成；此处错误只可能是占用 / 权限 / 平台问题。
-            .map_err(|_err| HotkeyError::RegisterFailed)
+            // 解析已在上方完成；此处错误按占用 / 平台问题归因（T-543 classify_register_error）。
+            .map_err(|err| classify_register_error(&err.to_string()))
     }
 
     fn unregister(&self, accelerator: &str) -> Result<(), HotkeyError> {
@@ -194,6 +214,8 @@ pub mod mock {
     pub struct MockHotkeyBackend {
         pub registered: Mutex<Vec<String>>,
         pub fail_next: std::sync::atomic::AtomicBool,
+        /// 置位时下一次注册返回该错误并清空（T-543：模拟平台级注册失败等归因）。
+        pub next_error: Mutex<Option<HotkeyError>>,
         /// 成功注册次数（T-010 Esc 注册 / 注销配对断言）。
         pub register_calls: std::sync::atomic::AtomicUsize,
         /// 注销调用次数（unregister + unregister_all 合计）。
@@ -205,6 +227,7 @@ pub mod mock {
             Self {
                 registered: Mutex::new(Vec::new()),
                 fail_next: std::sync::atomic::AtomicBool::new(false),
+                next_error: Mutex::new(None),
                 register_calls: std::sync::atomic::AtomicUsize::new(0),
                 unregister_calls: std::sync::atomic::AtomicUsize::new(0),
             }
@@ -224,6 +247,10 @@ pub mod mock {
 
     impl HotkeyBackend for MockHotkeyBackend {
         fn register(&self, accelerator: &str) -> Result<(), HotkeyError> {
+            // 指定错误优先（T-543 归因测试用），一次性。
+            if let Some(err) = self.next_error.lock().unwrap().take() {
+                return Err(err);
+            }
             if self
                 .fail_next
                 .swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -328,6 +355,22 @@ mod tests {
         assert!(matches!(
             parse_accelerator("MouseForward"),
             Err(HotkeyError::MouseKeyUnsupported(_))
+        ));
+    }
+
+    #[test]
+    fn classify_register_error_attributes_occupied() {
+        // 三平台"被占用"路径的统一错误串（global-hotkey AlreadyRegistered）。
+        assert!(matches!(
+            classify_register_error("GlobalHotKey error: HotKey already registered: HotKey { mods: CONTROL, key: KeyC }"),
+            HotkeyError::RegisterFailed
+        ));
+        // macOS RegisterEventHotKey 失败等：平台级失败，保留原文。
+        assert!(matches!(
+            classify_register_error(
+                "Unable to register hotkey: RegisterEventHotKey failed for KeyC"
+            ),
+            HotkeyError::Platform(_)
         ));
     }
 
